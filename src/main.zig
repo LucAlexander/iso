@@ -46,7 +46,7 @@ pub fn tokenize(mem: *const std.mem.Allocator, text: []const u8) Buffer(Token) {
 					var value: Word = c-48;
 					if (text[i] == 'x'){
 						i += 1;
-						while (std.ascii.isHex(text[i]) and i < text.len){
+						while (i < text.len and std.ascii.isHex(text[i])){
 							value *= 16;
 							if (std.ascii.isDigit(text[i])){
 								value += text[i]-48;
@@ -61,7 +61,7 @@ pub fn tokenize(mem: *const std.mem.Allocator, text: []const u8) Buffer(Token) {
 						}
 					}
 					else{
-						while (std.ascii.isDigit(text[i]) and i < text.len){
+						while (i < text.len and std.ascii.isDigit(text[i])){
 							value *= 10;
 							value += text[i]-48;
 							i += 1;
@@ -77,7 +77,7 @@ pub fn tokenize(mem: *const std.mem.Allocator, text: []const u8) Buffer(Token) {
 				}
 				else if (std.ascii.isAlphanumeric(c) or c == '_'){
 					const start = i;
-					while ((std.ascii.isAlphanumeric(text[i]) or c == '_') and i < text.len){
+					while (i < text.len and (std.ascii.isAlphanumeric(text[i]) or text[i] == '_')){
 						i += 1;
 					}
 					tokens.append(Token{
@@ -116,6 +116,7 @@ const Inst = union(enum){
 	quote,
 	unquote,
 	eq0,
+	halt,
 	data: Word
 };
 
@@ -123,10 +124,8 @@ const ParseError = error {
 	UnexpectedToken,
 };
 
-pub fn parse(mem: *const std.mem.Allocator, tokens: []Token, k: u64, instructions: *Buffer(Inst), close_token: ?TOKEN) ParseError!u64 {
+pub fn parse(mem: *const std.mem.Allocator, tokens: []Token, k: u64, instructions: *Buffer(Inst), close_token: ?TOKEN, defs: *Map(Word), def_backlog: *Map(Buffer(u64))) ParseError!u64 {
 	var i = k;
-	var defs = Map(Word).init(mem.*);
-	var def_backlog = Map(Buffer(u64)).init(mem.*);
 	while (i < tokens.len){
 		switch (tokens[i].tag){
 			open_quote => {
@@ -134,9 +133,12 @@ pub fn parse(mem: *const std.mem.Allocator, tokens: []Token, k: u64, instruction
 				instructions.append(Inst{.jmp=undefined}) catch unreachable;
 				const save = instructions.items.len;
 				instructions.append(Inst{.data=0}) catch unreachable;
-				i = try parse(mem, tokens, i, instructions, close_quote);
+				const value:Word = @truncate(instructions.items.len*2);
+				i = try parse(mem, tokens, i, instructions, close_quote, defs, def_backlog);
 				instructions.append(Inst{ .pop_rs=undefined}) catch unreachable;
 				instructions.items[save].data = @intCast(instructions.items.len*2);
+				instructions.append(Inst{ .psh_ds=undefined}) catch unreachable;
+				instructions.append(Inst{.data=value}) catch unreachable;
 				i += 1;
 				continue;
 			},
@@ -159,7 +161,7 @@ pub fn parse(mem: *const std.mem.Allocator, tokens: []Token, k: u64, instruction
 				instructions.append(Inst{.jmp=undefined}) catch unreachable;
 				const save = instructions.items.len;
 				instructions.append(Inst{.data=0}) catch unreachable;
-				i = try parse(mem, tokens, i, instructions, close_word);
+				i = try parse(mem, tokens, i, instructions, close_word, defs, def_backlog);
 				instructions.append(Inst{ .pop_rs=undefined}) catch unreachable;
 				defs.put(name.value.text, loc) catch unreachable;
 				instructions.items[save].data = @intCast(instructions.items.len*2);
@@ -260,6 +262,11 @@ pub fn parse(mem: *const std.mem.Allocator, tokens: []Token, k: u64, instruction
 					i += 1;
 					continue;
 				}
+				if (std.mem.eql(u8, tokens[i].value.text, "hlt")){
+					instructions.append(Inst{ .halt = undefined }) catch unreachable;
+					i += 1;
+					continue;
+				}
 				if (defs.get(tokens[i].value.text)) |address| {
 					instructions.append(Inst{ .psh_rs = undefined}) catch unreachable;
 					instructions.append(Inst{ .jmp=undefined, }) catch unreachable;
@@ -317,6 +324,7 @@ const QUT = 17;
 const UNQ = 18;
 const CAT = 19;
 const EQ0 = 20;
+const HLT = 21;
 
 pub fn code_gen(mem: *const std.mem.Allocator, instructions: Buffer(Inst)) []u8 {
 	var bytes = mem.alloc(u8, instructions.items.len*2) catch unreachable;
@@ -343,6 +351,7 @@ pub fn code_gen(mem: *const std.mem.Allocator, instructions: Buffer(Inst)) []u8 
 			.quote => {bytes[i] = QUT;},
 			.unquote => {bytes[i] = UNQ;},
 			.eq0 => {bytes[i] = EQ0;},
+			.halt => {bytes[i] = HLT;},
 			.data => {
 				bytes[i] = @truncate((inst.data & 0xFF00) >> 8);
 				i += 1;
@@ -459,7 +468,7 @@ const Machine = struct {
 				_ = self.ds[core].pop();
 			},
 			PSH_RS => {
-				self.rs[core].push(self.ip[core]);
+				self.rs[core].push(self.ip[core]+4);
 			},
 			POP_RS => {
 				self.ip[core] = self.rs[core].pop();
@@ -532,14 +541,11 @@ const Machine = struct {
 			UNQ => {
 				const loc = self.ds[core].pop();
 				if (loc < self.mem.len){
-					const address = (@as(Word, @intCast(self.mem[loc])) << 8) + self.mem[loc + 1];
-					if (address < self.mem.len){
-						const new_ip = (@as(Word, @intCast(self.mem[address])) << 8) + self.mem[address + 1];
-						if (address%2 == 0){
-							self.rs[core].push(self.ip[core]);
-							self.ip[core] = new_ip;
-							return;
-						}
+					if (loc%2 == 0){
+						const new_ip = (@as(Word, @intCast(self.mem[loc])) << 8) + self.mem[loc + 1];
+						self.rs[core].push(self.ip[core]+4);
+						self.ip[core] = new_ip;
+						return;
 					}
 				}
 				self.ds[core].push(loc);
@@ -620,6 +626,9 @@ const Machine = struct {
 					self.ds[core].push(target);
 				}
 			},
+			HLT => {
+				self.running[core] = false;
+			},
 			else => { }
 		}
 		self.ip[core] += 2;
@@ -666,7 +675,9 @@ pub fn main() !void {
 	const contents = try get_contents(&main_mem, filename);
 	const tokens = tokenize(&main_mem, contents);
 	var instructions = Buffer(Inst).init(main_mem);
-	_ = parse(&main_mem, tokens.items, 0, &instructions, null) catch unreachable;
+	var defs = Map(Word).init(main_mem);
+	var def_backlog = Map(Buffer(u64)).init(main_mem);
+	_ = parse(&main_mem, tokens.items, 0, &instructions, null, &defs, &def_backlog) catch unreachable;
 	const bytes = code_gen(&main_mem, instructions);
 	for (bytes) |b| {
 		std.debug.print("{x:02} ", .{b});
