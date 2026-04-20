@@ -400,240 +400,241 @@ const Stack = struct {
 	}
 };
 
-const CORES = 2;
+pub fn Machine(comptime CORES: u8) type {
+	return struct {
+		const Self = @This();
+		mem: []u8,
+		ds: [CORES]Stack,
+		rs: [CORES]Stack,
+		ip: [CORES]Word,
+		hp: Word,
+		hp_start: Word,
+		running: [CORES]bool,
 
-const Machine = struct {
-	mem: []u8,
-	ds: [CORES]Stack,
-	rs: [CORES]Stack,
-	ip: [CORES]Word,
-	hp: Word,
-	hp_start: Word,
-	running: [CORES]bool,
-
-	pub fn init(mem: *const std.mem.Allocator, size: Word, ss: Word) Machine {
-		var mach = Machine{
-			.mem = mem.alloc(u8, size) catch unreachable,
-			.ds = undefined,
-			.rs = undefined,
-			.ip = undefined,
-			.hp = 0,
-			.hp_start = 0,
-			.running = undefined
-		};
-		for (0..CORES) |i| {
-			mach.ds[i] = Stack.init(mem, ss);
-			mach.rs[i] = Stack.init(mem, ss);
-			mach.ip[i] = 0;
-			mach.running[i] = false;
+		pub fn init(mem: *const std.mem.Allocator, size: Word, ss: Word) Self {
+			var mach = Self{
+				.mem = mem.alloc(u8, size) catch unreachable,
+				.ds = undefined,
+				.rs = undefined,
+				.ip = undefined,
+				.hp = 0,
+				.hp_start = 0,
+				.running = undefined
+			};
+			for (0..CORES) |i| {
+				mach.ds[i] = Stack.init(mem, ss);
+				mach.rs[i] = Stack.init(mem, ss);
+				mach.ip[i] = 0;
+				mach.running[i] = false;
+			}
+			return mach;
 		}
-		return mach;
-	}
 
-	pub fn load_rom(self: *Machine, loc: Word, bytes: []u8) void {
-		var i:Word= loc;
-		while (i < loc+bytes.len){
-			self.mem[i] = bytes[i-loc];
-			i += 1;
+		pub fn load_rom(self: *Self, loc: Word, bytes: []u8) void {
+			var i:Word= loc;
+			while (i < loc+bytes.len){
+				self.mem[i] = bytes[i-loc];
+				i += 1;
+			}
+			self.hp = i;
+			self.hp_start = i;
 		}
-		self.hp = i;
-		self.hp_start = i;
-	}
 
-	pub fn run(self: *Machine, core: u8, ip: Word) void {
-		self.ip[core] = ip;
-		self.running[core] = true;
-	}
-	
-	pub fn step(self: *Machine) void {
-		for (0..CORES)|i|{
-			self.step_core(@truncate(i));
+		pub fn run(self: *Self, core: u8, ip: Word) void {
+			self.ip[core] = ip;
+			self.running[core] = true;
 		}
-	}
+		
+		pub fn step(self: *Self) void {
+			for (0..CORES)|i|{
+				self.step_core(@truncate(i));
+			}
+		}
 
-	pub fn step_core(self: *Machine, core: u8) void {
-		if (self.running[core] == false){
-			return;
-		}
-		switch (self.mem[self.ip[core]]) {
-			NOP => {},
-			PSH_DS => {
-				self.ip[core] += 2;
-				if (self.ip[core] < self.mem.len){
-					const data = (@as(Word, @intCast(self.mem[self.ip[core]])) << 8) + self.mem[self.ip[core] + 1];
-					self.ds[core].push(data);
-				}
-			},
-			POP_DS => {
-				_ = self.ds[core].pop();
-			},
-			PSH_RS => {
-				self.rs[core].push(self.ip[core]+4);
-			},
-			POP_RS => {
-				self.ip[core] = self.rs[core].pop();
-			},
-			STR => {
-				const loc = self.ds[core].pop();
-				if (loc < self.mem.len){
-					const address = (@as(Word, @intCast(self.mem[loc])) << 8) + self.mem[loc + 1];
-					if (address < self.mem.len){
-						if (address % 2 == 0){
-							const data = self.ds[core].pop();
-							self.mem[address] = @truncate(data >> 8);
-							self.mem[address+1] = @truncate(data & 0xFF);
-							self.ip[core] += 2;
+		pub fn step_core(self: *Self, core: u8) void {
+			if (self.running[core] == false){
+				return;
+			}
+			switch (self.mem[self.ip[core]]) {
+				NOP => {},
+				PSH_DS => {
+					self.ip[core] += 2;
+					if (self.ip[core] < self.mem.len){
+						const data = (@as(Word, @intCast(self.mem[self.ip[core]])) << 8) + self.mem[self.ip[core] + 1];
+						self.ds[core].push(data);
+					}
+				},
+				POP_DS => {
+					_ = self.ds[core].pop();
+				},
+				PSH_RS => {
+					self.rs[core].push(self.ip[core]+4);
+				},
+				POP_RS => {
+					self.ip[core] = self.rs[core].pop();
+				},
+				STR => {
+					const loc = self.ds[core].pop();
+					if (loc < self.mem.len){
+						const address = (@as(Word, @intCast(self.mem[loc])) << 8) + self.mem[loc + 1];
+						if (address < self.mem.len){
+							if (address % 2 == 0){
+								const data = self.ds[core].pop();
+								self.mem[address] = @truncate(data >> 8);
+								self.mem[address+1] = @truncate(data & 0xFF);
+								self.ip[core] += 2;
+								return;
+							}
+						}
+					}
+					self.ds[core].push(loc);
+				},
+				JMP => {
+					self.ip[core] += 2;
+					if (self.ip[core] < self.mem.len){
+						const data = (@as(Word, @intCast(self.mem[self.ip[core]])) << 8) + self.mem[self.ip[core] + 1];
+						if (data%2==0){
+							self.ip[core] = data;
 							return;
 						}
 					}
-				}
-				self.ds[core].push(loc);
-			},
-			JMP => {
-				self.ip[core] += 2;
-				if (self.ip[core] < self.mem.len){
-					const data = (@as(Word, @intCast(self.mem[self.ip[core]])) << 8) + self.mem[self.ip[core] + 1];
-					if (data%2==0){
-						self.ip[core] = data;
-						return;
-					}
-				}
-			},
-			NIP => {
-				const a = self.ds[core].pop();
-				_ = self.ds[core].pop();
-				self.ds[core].push(a);
-			},
-			OVR => {
-				const a = self.ds[core].pop();
-				const b = self.ds[core].pop();
-				const c = self.ds[core].pop();
-				self.ds[core].push(b);
-				self.ds[core].push(a);
-				self.ds[core].push(c);
-			},
-			DUP => {
-				const a = self.ds[core].pop();
-				self.ds[core].push(a);
-				self.ds[core].push(a);
-			},
-			CUT => {
-				const a = self.ds[core].pop();
-				const b = self.ds[core].pop();
-				_ = self.ds[core].pop();
-				self.ds[core].push(b);
-				self.ds[core].push(a);
-			},
-			ROT => {
-				const a = self.ds[core].pop();
-				const b = self.ds[core].pop();
-				const c = self.ds[core].pop();
-				self.ds[core].push(a);
-				self.ds[core].push(c);
-				self.ds[core].push(b);
-			},
-			SWP => {
-				const a = self.ds[core].pop();
-				const b = self.ds[core].pop();
-				self.ds[core].push(a);
-				self.ds[core].push(b);
-			},
-			UNQ => {
-				const loc = self.ds[core].pop();
-				if (loc < self.mem.len){
-					if (loc%2 == 0){
-						const new_ip = (@as(Word, @intCast(self.mem[loc])) << 8) + self.mem[loc + 1];
-						self.rs[core].push(self.ip[core]+4);
-						self.ip[core] = new_ip;
-						return;
-					}
-				}
-				self.ds[core].push(loc);
-			},
-			ADD => {
-				const a = self.ds[core].pop();
-				const b = self.ds[core].pop();
-				const c = a +% b;
-				self.ds[core].push(c);
-			},
-			MUL => {
-				const a = self.ds[core].pop();
-				const b = self.ds[core].pop();
-				const c = a *% b;
-				self.ds[core].push(c);
-			},
-			SUB => {
-				const a = self.ds[core].pop();
-				const b = self.ds[core].pop();
-				const c = a -% b;
-				self.ds[core].push(c);
-			},
-			DIV => {
-				const a = self.ds[core].pop();
-				const b = self.ds[core].pop();
-				const c = a / b;
-				self.ds[core].push(c);
-			},
-			QUT => {
-				const target = self.ds[core].pop();
-				if (self.hp+4 > self.mem.len){
-					self.hp = self.hp_start;
-				}
-				const save = self.hp;
-				self.mem[self.hp] = @truncate(target>>8);
-				self.hp += 1;
-				self.mem[self.hp] = @truncate(target & 0xff);
-				self.hp += 1;
-				self.mem[self.hp] = POP_RS;
-				self.hp += 2;
-				self.ds[core].push(save);
-			},
-			CAT => {
-				const right = self.ds[core].pop();
-				const left = self.ds[core].pop();
-				if (self.hp+14 > self.mem.len){
-					self.hp = self.hp_start;
-				}
-				const save = self.hp;
-				self.mem[self.hp] = PSH_DS;
-				self.hp += 2;
-				self.mem[self.hp] = @truncate(left>>8);
-				self.hp += 1;
-				self.mem[self.hp] = @truncate(left & 0xff);
-				self.hp += 1;
-				self.mem[self.hp] = UNQ;
-				self.hp += 2;
-				self.mem[self.hp] = PSH_DS;
-				self.hp += 2;
-				self.mem[self.hp] = @truncate(right>>8);
-				self.hp += 1;
-				self.mem[self.hp] = @truncate(right & 0xff);
-				self.hp += 1;
-				self.mem[self.hp] = UNQ;
-				self.hp += 2;
-				self.mem[self.hp] = POP_RS;
-				self.hp += 2;
-				self.ds[core].push(save);
-			},
-			EQ0 => {
-				const val = self.ds[core].pop();
-				if (val == 0){
+				},
+				NIP => {
+					const a = self.ds[core].pop();
 					_ = self.ds[core].pop();
-				}
-				else{
+					self.ds[core].push(a);
+				},
+				OVR => {
+					const a = self.ds[core].pop();
+					const b = self.ds[core].pop();
+					const c = self.ds[core].pop();
+					self.ds[core].push(b);
+					self.ds[core].push(a);
+					self.ds[core].push(c);
+				},
+				DUP => {
+					const a = self.ds[core].pop();
+					self.ds[core].push(a);
+					self.ds[core].push(a);
+				},
+				CUT => {
+					const a = self.ds[core].pop();
+					const b = self.ds[core].pop();
+					_ = self.ds[core].pop();
+					self.ds[core].push(b);
+					self.ds[core].push(a);
+				},
+				ROT => {
+					const a = self.ds[core].pop();
+					const b = self.ds[core].pop();
+					const c = self.ds[core].pop();
+					self.ds[core].push(a);
+					self.ds[core].push(c);
+					self.ds[core].push(b);
+				},
+				SWP => {
+					const a = self.ds[core].pop();
+					const b = self.ds[core].pop();
+					self.ds[core].push(a);
+					self.ds[core].push(b);
+				},
+				UNQ => {
+					const loc = self.ds[core].pop();
+					if (loc < self.mem.len){
+						if (loc%2 == 0){
+							const new_ip = (@as(Word, @intCast(self.mem[loc])) << 8) + self.mem[loc + 1];
+							self.rs[core].push(self.ip[core]+4);
+							self.ip[core] = new_ip;
+							return;
+						}
+					}
+					self.ds[core].push(loc);
+				},
+				ADD => {
+					const a = self.ds[core].pop();
+					const b = self.ds[core].pop();
+					const c = a +% b;
+					self.ds[core].push(c);
+				},
+				MUL => {
+					const a = self.ds[core].pop();
+					const b = self.ds[core].pop();
+					const c = a *% b;
+					self.ds[core].push(c);
+				},
+				SUB => {
+					const a = self.ds[core].pop();
+					const b = self.ds[core].pop();
+					const c = a -% b;
+					self.ds[core].push(c);
+				},
+				DIV => {
+					const a = self.ds[core].pop();
+					const b = self.ds[core].pop();
+					const c = a / b;
+					self.ds[core].push(c);
+				},
+				QUT => {
 					const target = self.ds[core].pop();
-					_ = self.ds[core].pop();
-					self.ds[core].push(target);
-				}
-			},
-			HLT => {
-				self.running[core] = false;
-			},
-			else => { }
+					if (self.hp+4 > self.mem.len){
+						self.hp = self.hp_start;
+					}
+					const save = self.hp;
+					self.mem[self.hp] = @truncate(target>>8);
+					self.hp += 1;
+					self.mem[self.hp] = @truncate(target & 0xff);
+					self.hp += 1;
+					self.mem[self.hp] = POP_RS;
+					self.hp += 2;
+					self.ds[core].push(save);
+				},
+				CAT => {
+					const right = self.ds[core].pop();
+					const left = self.ds[core].pop();
+					if (self.hp+14 > self.mem.len){
+						self.hp = self.hp_start;
+					}
+					const save = self.hp;
+					self.mem[self.hp] = PSH_DS;
+					self.hp += 2;
+					self.mem[self.hp] = @truncate(left>>8);
+					self.hp += 1;
+					self.mem[self.hp] = @truncate(left & 0xff);
+					self.hp += 1;
+					self.mem[self.hp] = UNQ;
+					self.hp += 2;
+					self.mem[self.hp] = PSH_DS;
+					self.hp += 2;
+					self.mem[self.hp] = @truncate(right>>8);
+					self.hp += 1;
+					self.mem[self.hp] = @truncate(right & 0xff);
+					self.hp += 1;
+					self.mem[self.hp] = UNQ;
+					self.hp += 2;
+					self.mem[self.hp] = POP_RS;
+					self.hp += 2;
+					self.ds[core].push(save);
+				},
+				EQ0 => {
+					const val = self.ds[core].pop();
+					if (val == 0){
+						_ = self.ds[core].pop();
+					}
+					else{
+						const target = self.ds[core].pop();
+						_ = self.ds[core].pop();
+						self.ds[core].push(target);
+					}
+				},
+				HLT => {
+					self.running[core] = false;
+				},
+				else => { }
+			}
+			self.ip[core] += 2;
 		}
-		self.ip[core] += 2;
-	}
-};
+	};
+}
 
 pub fn get_contents(mem: *const std.mem.Allocator, filename: []const u8) ![]u8 {
 	var infile = std.fs.cwd().openFile(filename, .{}) catch |err| {
@@ -683,7 +684,7 @@ pub fn main() !void {
 		std.debug.print("{x:02} ", .{b});
 	}
 	std.debug.print("\n", .{});
-	var mach = Machine.init(&main_mem, 1024, 256);
+	var mach = Machine(2).init(&main_mem, 1024, 256);
 	mach.load_rom(0, bytes);
 	mach.run(0, 0);
 	while (true) {
