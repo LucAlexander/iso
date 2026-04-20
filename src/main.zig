@@ -114,7 +114,6 @@ const Inst = union(enum){
 	mul,
 	div,
 	cat,
-	dip,
 	quote,
 	unquote,
 	data: Word
@@ -193,11 +192,6 @@ pub fn parse(mem: *const std.mem.Allocator, tokens: []Token, k: u64, instruction
 				}
 				if (std.mem.eql(u8, tokens[i].value.text, "unq")){
 					instructions.append(Inst{ .unquote = undefined }) catch unreachable;
-					i += 1;
-					continue;
-				}
-				if (std.mem.eql(u8, tokens[i].value.text, "dip")){
-					instructions.append(Inst{ .dip = undefined }) catch unreachable;
 					i += 1;
 					continue;
 				}
@@ -318,10 +312,9 @@ const DUP = 12;
 const CUT = 13;
 const OVR = 14;
 const SWP = 15;
-const DIP = 16;
+const STR = 16;
 const QUT = 17;
 const UNQ = 18;
-const STR = 19;
 
 pub fn code_gen(mem: *const std.mem.Allocator, instructions: Buffer(Inst)) []u8 {
 	var bytes = mem.alloc(u8, instructions.items.len*2) catch unreachable;
@@ -349,7 +342,6 @@ pub fn code_gen(mem: *const std.mem.Allocator, instructions: Buffer(Inst)) []u8 
 			.mul => {bytes[i] = MUL;},
 			.div => {bytes[i] = DIV;},
 			.cat => {bytes[i] = CAT;},
-			.dip => {bytes[i] = DIP;},
 			.quote => {bytes[i] = QUT;},
 			.unquote => {bytes[i] = UNQ;},
 			.data => {
@@ -371,6 +363,7 @@ const Machine = struct {
 	rs: Stack,
 	ip: Word,
 	hp: Word,
+	hp_start: Word
 	running: bool,
 
 	pub fn init(mem: *const std.mem.Allocator, size: Word, ss: Word) Machine {
@@ -390,6 +383,7 @@ const Machine = struct {
 			i += 1;
 		}
 		self.hp = i;
+		self.hp_start = i;
 	}
 
 	pub fn run(self: *Machine, ip: Word) void {
@@ -523,14 +517,46 @@ const Machine = struct {
 				const c = a / b;
 				self.ds.push(c);
 			},
-			DIP => {
-
-			},
 			QUT => {
-
+				const target = self.ds.pop();
+				if (self.hp+4 > self.mem.len){
+					self.hp = self.hp_start;
+				}
+				const save = self.hp;
+				self.mem[self.hp] = @truncate(target>>8);
+				self.hp += 1;
+				self.mem[self.hp] = @truncate(target& 0xff);
+				self.hp += 1;
+				self.mem[self.hp] = POP_RS;
+				self.hp += 2;
+				self.ds.push(save);
 			},
 			CAT => {
-				
+				const right = self.ds.pop();
+				const left = self.ds.pop();
+				if (self.hp+14 > self.mem.len){
+					self.hp = self.hp_start;
+				}
+				const save = self.hp;
+				self.mem[self.hp] = PSH_DS;
+				self.hp += 2;
+				self.mem[self.hp] = @truncate(left>>8);
+				self.hp += 1;
+				self.mem[self.hp] = @truncate(left & 0xff);
+				self.hp += 1;
+				self.mem[self.hp] = RUN;
+				self.hp += 2;
+				self.mem[self.hp] = PSH_DS;
+				self.hp += 2;
+				self.mem[self.hp] = @truncate(right>>8);
+				self.hp += 1;
+				self.mem[self.hp] = @truncate(right& 0xff);
+				self.hp += 1;
+				self.mem[self.hp] = RUN;
+				self.hp += 2;
+				self.mem[self.hp] = POP_RS;
+				self.hp += 2;
+				self.ds.push(save);
 			},
 			else => { }
 		}
