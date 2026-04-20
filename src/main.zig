@@ -30,7 +30,7 @@ pub fn tokenize(mem: *const std.mem.Allocator, text: []const u8) Buffer(Token) {
 				i += 1;
 				continue;
 			},
-			cat, quote, unquote, open_quote, close_quote, open_word, close_word => {
+			open_quote, close_quote, open_word, close_word => {
 				tokens.append(Token{
 					.tag = c,
 					.value = .{
@@ -108,7 +108,6 @@ const Inst = union(enum){
 	cut,
 	ovr,
 	swp,
-	run,
 	add,
 	sub,
 	mul,
@@ -123,7 +122,7 @@ const ParseError = error {
 	UnexpectedToken,
 };
 
-pub fn parse(mem: *const std.mem.Allocator, tokens: []Token, k: u64, instructions = Buffer(*Symbol), close_token: ?TOKEN) ParseError!u64 {
+pub fn parse(mem: *const std.mem.Allocator, tokens: []Token, k: u64, instructions: *Buffer(Inst), close_token: ?TOKEN) ParseError!u64 {
 	var i = k;
 	var defs = Map(Word).init(mem.*);
 	var def_backlog = Map(Buffer(u64)).init(mem.*);
@@ -235,11 +234,6 @@ pub fn parse(mem: *const std.mem.Allocator, tokens: []Token, k: u64, instruction
 					i += 1;
 					continue;
 				}
-				if (std.mem.eql(u8, tokens[i].value.text, "run")){
-					instructions.append(Inst{ .run = undefined }) catch unreachable;
-					i += 1;
-					continue;
-				}
 				if (std.mem.eql(u8, tokens[i].value.text, "add")){
 					instructions.append(Inst{ .add = undefined }) catch unreachable;
 					i += 1;
@@ -315,6 +309,7 @@ const SWP = 15;
 const STR = 16;
 const QUT = 17;
 const UNQ = 18;
+const CAT = 19;
 
 pub fn code_gen(mem: *const std.mem.Allocator, instructions: Buffer(Inst)) []u8 {
 	var bytes = mem.alloc(u8, instructions.items.len*2) catch unreachable;
@@ -325,10 +320,7 @@ pub fn code_gen(mem: *const std.mem.Allocator, instructions: Buffer(Inst)) []u8 
 			.pop_ds => {bytes[i] = POP_DS;},
 			.psh_rs => {bytes[i] = PSH_RS;},
 			.pop_rs => {bytes[i] = POP_RS;},
-			.psh_cs => {bytes[i] = PSH_CS;},
-			.pop_cs => {bytes[i] = POP_CS;},
-			.read_ds => {bytes[i] = LD;},
-			.write_ds => {bytes[i] = ST;},
+			.write_ds => {bytes[i] = STR;},
 			.jmp => {bytes[i] = JMP;},
 			.nip => {bytes[i] = NIP;},
 			.rot => {bytes[i] = ROT;},
@@ -336,7 +328,6 @@ pub fn code_gen(mem: *const std.mem.Allocator, instructions: Buffer(Inst)) []u8 
 			.cut => {bytes[i] = CUT;},
 			.ovr => {bytes[i] = OVR;},
 			.swp => {bytes[i] = SWP;},
-			.run => {bytes[i] = RUN;},
 			.add => {bytes[i] = ADD;},
 			.sub => {bytes[i] = SUB;},
 			.mul => {bytes[i] = MUL;},
@@ -357,13 +348,48 @@ pub fn code_gen(mem: *const std.mem.Allocator, instructions: Buffer(Inst)) []u8 
 	return bytes;
 }
 
+const Stack = struct {
+	data: []Word,
+	cursor: Word,
+
+	pub fn init(mem: *const std.mem.Allocator, size: Word) Stack {
+		return Stack{
+			.data = mem.alloc(Word, size) catch unreachable,
+			.cursor = 0
+		};
+	}
+
+	pub fn push(self: *Stack, item: Word) void {
+		if (self.cursor == self.data.len){
+			self.cursor = 0;
+		}
+		self.data[self.cursor] = item;
+		self.cursor += 1;
+	}
+
+	pub fn top(self: *Stack) Word {
+		if (self.cursor == 0){
+			return self.data[self.data.len-1];
+		}
+		return self.data[self.cursor-1];
+	}
+	
+	pub fn pop(self: *Stack) Word {
+		if (self.cursor == 0){
+			self.cursor = @intCast(self.data.len);
+		}
+		self.cursor -= 1;
+		return self.data[self.cursor];
+	}
+};
+
 const Machine = struct {
 	mem: []u8,
 	ds: Stack,
 	rs: Stack,
 	ip: Word,
 	hp: Word,
-	hp_start: Word
+	hp_start: Word,
 	running: bool,
 
 	pub fn init(mem: *const std.mem.Allocator, size: Word, ss: Word) Machine {
@@ -372,12 +398,14 @@ const Machine = struct {
 			.ds = Stack.init(mem, ss),
 			.rs = Stack.init(mem, ss),
 			.ip = 0,
+			.hp = 0,
+			.hp_start = 0,
 			.running = false
 		};
 	}
 
 	pub fn load_rom(self: *Machine, loc: Word, bytes: []u8) void {
-		var i:u64 = loc;
+		var i:Word= loc;
 		while (i < loc+bytes.len){
 			self.mem[i] = bytes[i-loc];
 			i += 1;
@@ -413,7 +441,7 @@ const Machine = struct {
 			POP_RS => {
 				self.ip = self.rs.pop();
 			},
-			ST => {
+			STR => {
 				const loc = self.ds.pop();
 				if (loc < self.mem.len){
 					const address = (@as(Word, @intCast(self.mem[loc])) << 8) + self.mem[loc + 1];
@@ -525,7 +553,7 @@ const Machine = struct {
 				const save = self.hp;
 				self.mem[self.hp] = @truncate(target>>8);
 				self.hp += 1;
-				self.mem[self.hp] = @truncate(target& 0xff);
+				self.mem[self.hp] = @truncate(target & 0xff);
 				self.hp += 1;
 				self.mem[self.hp] = POP_RS;
 				self.hp += 2;
@@ -544,15 +572,15 @@ const Machine = struct {
 				self.hp += 1;
 				self.mem[self.hp] = @truncate(left & 0xff);
 				self.hp += 1;
-				self.mem[self.hp] = RUN;
+				self.mem[self.hp] = UNQ;
 				self.hp += 2;
 				self.mem[self.hp] = PSH_DS;
 				self.hp += 2;
 				self.mem[self.hp] = @truncate(right>>8);
 				self.hp += 1;
-				self.mem[self.hp] = @truncate(right& 0xff);
+				self.mem[self.hp] = @truncate(right & 0xff);
 				self.hp += 1;
-				self.mem[self.hp] = RUN;
+				self.mem[self.hp] = UNQ;
 				self.hp += 2;
 				self.mem[self.hp] = POP_RS;
 				self.hp += 2;
@@ -610,6 +638,12 @@ pub fn main() !void {
 		std.debug.print("{x:02} ", .{b});
 	}
 	std.debug.print("\n", .{});
+	var mach = Machine.init(&main_mem, 1024, 256);
+	mach.load_rom(0, bytes);
+	mach.run(0);
+	while (mach.running){
+		mach.step();
+	}
 }
 
 
