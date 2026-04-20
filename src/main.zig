@@ -115,6 +115,7 @@ const Inst = union(enum){
 	cat,
 	quote,
 	unquote,
+	eq0,
 	data: Word
 };
 
@@ -254,6 +255,11 @@ pub fn parse(mem: *const std.mem.Allocator, tokens: []Token, k: u64, instruction
 					i += 1;
 					continue;
 				}
+				if (std.mem.eql(u8, tokens[i].value.text, "eq0")){
+					instructions.append(Inst{ .eq0 = undefined }) catch unreachable;
+					i += 1;
+					continue;
+				}
 				if (defs.get(tokens[i].value.text)) |address| {
 					instructions.append(Inst{ .psh_rs = undefined}) catch unreachable;
 					instructions.append(Inst{ .jmp=undefined, }) catch unreachable;
@@ -310,6 +316,7 @@ const STR = 16;
 const QUT = 17;
 const UNQ = 18;
 const CAT = 19;
+const EQ0 = 20;
 
 pub fn code_gen(mem: *const std.mem.Allocator, instructions: Buffer(Inst)) []u8 {
 	var bytes = mem.alloc(u8, instructions.items.len*2) catch unreachable;
@@ -335,6 +342,7 @@ pub fn code_gen(mem: *const std.mem.Allocator, instructions: Buffer(Inst)) []u8 
 			.cat => {bytes[i] = CAT;},
 			.quote => {bytes[i] = QUT;},
 			.unquote => {bytes[i] = UNQ;},
+			.eq0 => {bytes[i] = EQ0;},
 			.data => {
 				bytes[i] = @truncate((inst.data & 0xFF00) >> 8);
 				i += 1;
@@ -383,25 +391,34 @@ const Stack = struct {
 	}
 };
 
+const CORES = 2;
+
 const Machine = struct {
 	mem: []u8,
-	ds: Stack,
-	rs: Stack,
-	ip: Word,
+	ds: [CORES]Stack,
+	rs: [CORES]Stack,
+	ip: [CORES]Word,
 	hp: Word,
 	hp_start: Word,
-	running: bool,
+	running: [CORES]bool,
 
 	pub fn init(mem: *const std.mem.Allocator, size: Word, ss: Word) Machine {
-		return Machine{
+		var mach = Machine{
 			.mem = mem.alloc(u8, size) catch unreachable,
-			.ds = Stack.init(mem, ss),
-			.rs = Stack.init(mem, ss),
-			.ip = 0,
+			.ds = undefined,
+			.rs = undefined,
+			.ip = undefined,
 			.hp = 0,
 			.hp_start = 0,
-			.running = false
+			.running = undefined
 		};
+		for (0..CORES) |i| {
+			mach.ds[i] = Stack.init(mem, ss);
+			mach.rs[i] = Stack.init(mem, ss);
+			mach.ip[i] = 0;
+			mach.running[i] = false;
+		}
+		return mach;
 	}
 
 	pub fn load_rom(self: *Machine, loc: Word, bytes: []u8) void {
@@ -414,139 +431,145 @@ const Machine = struct {
 		self.hp_start = i;
 	}
 
-	pub fn run(self: *Machine, ip: Word) void {
-		self.ip = ip;
-		self.running = true;
+	pub fn run(self: *Machine, core: u8, ip: Word) void {
+		self.ip[core] = ip;
+		self.running[core] = true;
+	}
+	
+	pub fn step(self: *Machine) void {
+		for (0..CORES)|i|{
+			self.step_core(@truncate(i));
+		}
 	}
 
-	pub fn step(self: *Machine) void {
-		if (self.running == false){
+	pub fn step_core(self: *Machine, core: u8) void {
+		if (self.running[core] == false){
 			return;
 		}
-		switch (self.mem[self.ip]) {
+		switch (self.mem[self.ip[core]]) {
 			NOP => {},
 			PSH_DS => {
-				self.ip += 2;
-				if (self.ip < self.mem.len){
-					const data = (@as(Word, @intCast(self.mem[self.ip])) << 8) + self.mem[self.ip + 1];
-					self.ds.push(data);
+				self.ip[core] += 2;
+				if (self.ip[core] < self.mem.len){
+					const data = (@as(Word, @intCast(self.mem[self.ip[core]])) << 8) + self.mem[self.ip[core] + 1];
+					self.ds[core].push(data);
 				}
 			},
 			POP_DS => {
-				_ = self.ds.pop();
+				_ = self.ds[core].pop();
 			},
 			PSH_RS => {
-				self.rs.push(self.ip);
+				self.rs[core].push(self.ip[core]);
 			},
 			POP_RS => {
-				self.ip = self.rs.pop();
+				self.ip[core] = self.rs[core].pop();
 			},
 			STR => {
-				const loc = self.ds.pop();
+				const loc = self.ds[core].pop();
 				if (loc < self.mem.len){
 					const address = (@as(Word, @intCast(self.mem[loc])) << 8) + self.mem[loc + 1];
 					if (address < self.mem.len){
 						if (address % 2 == 0){
-							const data = self.ds.pop();
+							const data = self.ds[core].pop();
 							self.mem[address] = @truncate(data >> 8);
 							self.mem[address+1] = @truncate(data & 0xFF);
-							self.ip += 2;
+							self.ip[core] += 2;
 							return;
 						}
 					}
 				}
-				self.ds.push(loc);
+				self.ds[core].push(loc);
 			},
 			JMP => {
-				self.ip += 2;
-				if (self.ip < self.mem.len){
-					const data = (@as(Word, @intCast(self.mem[self.ip])) << 8) + self.mem[self.ip + 1];
+				self.ip[core] += 2;
+				if (self.ip[core] < self.mem.len){
+					const data = (@as(Word, @intCast(self.mem[self.ip[core]])) << 8) + self.mem[self.ip[core] + 1];
 					if (data%2==0){
-						self.ip = data;
+						self.ip[core] = data;
 						return;
 					}
 				}
 			},
 			NIP => {
-				const a = self.ds.pop();
-				_ = self.ds.pop();
-				self.ds.push(a);
+				const a = self.ds[core].pop();
+				_ = self.ds[core].pop();
+				self.ds[core].push(a);
 			},
 			OVR => {
-				const a = self.ds.pop();
-				const b = self.ds.pop();
-				const c = self.ds.pop();
-				self.ds.push(b);
-				self.ds.push(a);
-				self.ds.push(c);
+				const a = self.ds[core].pop();
+				const b = self.ds[core].pop();
+				const c = self.ds[core].pop();
+				self.ds[core].push(b);
+				self.ds[core].push(a);
+				self.ds[core].push(c);
 			},
 			DUP => {
-				const a = self.ds.pop();
-				self.ds.push(a);
-				self.ds.push(a);
+				const a = self.ds[core].pop();
+				self.ds[core].push(a);
+				self.ds[core].push(a);
 			},
 			CUT => {
-				const a = self.ds.pop();
-				const b = self.ds.pop();
-				_ = self.ds.pop();
-				self.ds.push(b);
-				self.ds.push(a);
+				const a = self.ds[core].pop();
+				const b = self.ds[core].pop();
+				_ = self.ds[core].pop();
+				self.ds[core].push(b);
+				self.ds[core].push(a);
 			},
 			ROT => {
-				const a = self.ds.pop();
-				const b = self.ds.pop();
-				const c = self.ds.pop();
-				self.ds.push(a);
-				self.ds.push(c);
-				self.ds.push(b);
+				const a = self.ds[core].pop();
+				const b = self.ds[core].pop();
+				const c = self.ds[core].pop();
+				self.ds[core].push(a);
+				self.ds[core].push(c);
+				self.ds[core].push(b);
 			},
 			SWP => {
-				const a = self.ds.pop();
-				const b = self.ds.pop();
-				self.ds.push(a);
-				self.ds.push(b);
+				const a = self.ds[core].pop();
+				const b = self.ds[core].pop();
+				self.ds[core].push(a);
+				self.ds[core].push(b);
 			},
 			UNQ => {
-				const loc = self.ds.pop();
+				const loc = self.ds[core].pop();
 				if (loc < self.mem.len){
 					const address = (@as(Word, @intCast(self.mem[loc])) << 8) + self.mem[loc + 1];
 					if (address < self.mem.len){
 						const new_ip = (@as(Word, @intCast(self.mem[address])) << 8) + self.mem[address + 1];
 						if (address%2 == 0){
-							self.rs.push(self.ip);
-							self.ip = new_ip;
+							self.rs[core].push(self.ip[core]);
+							self.ip[core] = new_ip;
 							return;
 						}
 					}
 				}
-				self.ds.push(loc);
+				self.ds[core].push(loc);
 			},
 			ADD => {
-				const a = self.ds.pop();
-				const b = self.ds.pop();
+				const a = self.ds[core].pop();
+				const b = self.ds[core].pop();
 				const c = a +% b;
-				self.ds.push(c);
+				self.ds[core].push(c);
 			},
 			MUL => {
-				const a = self.ds.pop();
-				const b = self.ds.pop();
+				const a = self.ds[core].pop();
+				const b = self.ds[core].pop();
 				const c = a *% b;
-				self.ds.push(c);
+				self.ds[core].push(c);
 			},
 			SUB => {
-				const a = self.ds.pop();
-				const b = self.ds.pop();
+				const a = self.ds[core].pop();
+				const b = self.ds[core].pop();
 				const c = a -% b;
-				self.ds.push(c);
+				self.ds[core].push(c);
 			},
 			DIV => {
-				const a = self.ds.pop();
-				const b = self.ds.pop();
+				const a = self.ds[core].pop();
+				const b = self.ds[core].pop();
 				const c = a / b;
-				self.ds.push(c);
+				self.ds[core].push(c);
 			},
 			QUT => {
-				const target = self.ds.pop();
+				const target = self.ds[core].pop();
 				if (self.hp+4 > self.mem.len){
 					self.hp = self.hp_start;
 				}
@@ -557,11 +580,11 @@ const Machine = struct {
 				self.hp += 1;
 				self.mem[self.hp] = POP_RS;
 				self.hp += 2;
-				self.ds.push(save);
+				self.ds[core].push(save);
 			},
 			CAT => {
-				const right = self.ds.pop();
-				const left = self.ds.pop();
+				const right = self.ds[core].pop();
+				const left = self.ds[core].pop();
 				if (self.hp+14 > self.mem.len){
 					self.hp = self.hp_start;
 				}
@@ -584,11 +607,22 @@ const Machine = struct {
 				self.hp += 2;
 				self.mem[self.hp] = POP_RS;
 				self.hp += 2;
-				self.ds.push(save);
+				self.ds[core].push(save);
+			},
+			EQ0 => {
+				const val = self.ds[core].pop();
+				if (val == 0){
+					_ = self.ds[core].pop();
+				}
+				else{
+					const target = self.ds[core].pop();
+					_ = self.ds[core].pop();
+					self.ds[core].push(target);
+				}
 			},
 			else => { }
 		}
-		self.ip += 2;
+		self.ip[core] += 2;
 	}
 };
 
@@ -640,11 +674,8 @@ pub fn main() !void {
 	std.debug.print("\n", .{});
 	var mach = Machine.init(&main_mem, 1024, 256);
 	mach.load_rom(0, bytes);
-	mach.run(0);
-	while (mach.running){
+	mach.run(0, 0);
+	while (true) {
 		mach.step();
 	}
 }
-
-
-//TODO multicore
