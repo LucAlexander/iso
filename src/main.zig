@@ -1019,5 +1019,3 @@ pub fn int_print(ds: *Stack, _: u8, _: u8, _: []u8) void {
 
 pub fn int_nop(_: *Stack, _:u8, _:u8, _:[]u8) void {
 }
-
-//TODO devices
