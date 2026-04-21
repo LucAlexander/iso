@@ -613,7 +613,7 @@ pub fn Machine(comptime CORES: u8) type {
 				.hp_start = 0,
 				.running = undefined
 			};
-			for (0..size) |i| {
+			for (0..size/2) |i| {
 				mach.cap[i] = Cap{
 					.perms=0,
 					.ptr = 0,
@@ -638,6 +638,17 @@ pub fn Machine(comptime CORES: u8) type {
 			}
 			self.hp = i;
 			self.hp_start = i;
+			for (0..CORES) |core| {
+				self.cs[core].push(Cap{
+					.perms = CAP_WRITE | CAP_EXECUTE,
+					.ptr = loc,
+					.len = @truncate(bytes.len)
+				});
+			}
+		}
+
+		pub fn publish_capability(self: *Self, loc: Word, cap: Cap) void {
+			self.cap[loc] = cap;
 		}
 
 		pub fn run(self: *Self, core: u8, ip: Word) void {
