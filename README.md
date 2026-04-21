@@ -25,5 +25,6 @@ hlt: -- halt machine
 ptr: (a) -- a as a literaladdress
 csh: a -- push capability of a
 cop: -- pop capability
+int: a -- run interrupt registered with a
 
 ```
