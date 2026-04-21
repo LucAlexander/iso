@@ -149,7 +149,6 @@ pub fn parse(mem: *const std.mem.Allocator, tokens: []Token, k: u64, instruction
 			},
 			open_word => {
 				i += 1;
-				const loc:Word = @intCast(instructions.items.len*2);
 				const name = tokens[i];
 				if (name.tag != iden){
 					return ParseError.UnexpectedToken;
@@ -157,6 +156,7 @@ pub fn parse(mem: *const std.mem.Allocator, tokens: []Token, k: u64, instruction
 				i += 1;
 				const save = instructions.items.len;
 				instructions.append(Inst{.jmp=0}) catch unreachable;
+				const loc:Word = @intCast(instructions.items.len*2);
 				i = try parse(mem, tokens, i, instructions, close_word, defs, def_backlog);
 				instructions.append(Inst{ .pop_rs=undefined}) catch unreachable;
 				defs.put(name.value.text, loc) catch unreachable;
@@ -302,7 +302,7 @@ const OPCODE = u8;
 const NOP = 0;
 const HLT = 1;
 const POP_DS = 2;
-const PSH_RS = 3;
+const EQ0 = 3;
 const POP_RS = 4;
 const ADD = 5;
 const MUL = 6;
@@ -319,7 +319,6 @@ const STR = 16;
 const QUT = 17;
 const UNQ = 18;
 const CAT = 19;
-const EQ0 = 20;
 
 const PSH_MASK = 0;
 const JMP_MASK = 1;
@@ -567,7 +566,7 @@ pub fn Machine(comptime CORES: u8) type {
 			const mask_mask:u8 = 3<<6;
 			const long_mask_mask:Word = 3<<14;
 			const mask:u8 = (inst & mask_mask) >> 6;
-			std.debug.print("{x:02} {x:02}\n", .{self.mem[self.ip[core]], self.mem[self.ip[core]+1]});
+			std.debug.print("{x:02} {x:02} ", .{self.mem[self.ip[core]], self.mem[self.ip[core]+1]});
 			if (mask == INTRINSIC_MASK){
 				const opcode = self.mem[self.ip[core]+1];
 				switch (opcode) {
@@ -575,10 +574,9 @@ pub fn Machine(comptime CORES: u8) type {
 					POP_DS => {
 						_ = self.ds[core].pop();
 					},
-					PSH_RS => {
-					},
 					POP_RS => {
 						self.ip[core] = self.rs[core].pop();
+						return;
 					},
 					STR => {
 						const address = self.ds[core].pop();
