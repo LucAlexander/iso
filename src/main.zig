@@ -98,7 +98,6 @@ pub fn tokenize(mem: *const std.mem.Allocator, text: []const u8) Buffer(Token) {
 const Inst = union(enum){
 	psh_ds,
 	pop_ds,
-	psh_rs,
 	pop_rs,
 	write_ds,
 	jmp,
@@ -117,6 +116,7 @@ const Inst = union(enum){
 	unquote,
 	eq0,
 	halt,
+	ptr,
 	data: Word
 };
 
@@ -267,14 +267,17 @@ pub fn parse(mem: *const std.mem.Allocator, tokens: []Token, k: u64, instruction
 					i += 1;
 					continue;
 				}
+				if (std.mem.eql(u8, tokens[i].value.text, "ptr")){
+					instructions.append(Inst{ .ptr = undefined }) catch unreachable;
+					i += 1;
+					continue;
+				}
 				if (defs.get(tokens[i].value.text)) |address| {
-					instructions.append(Inst{ .psh_rs = undefined}) catch unreachable;
 					instructions.append(Inst{ .jmp=undefined, }) catch unreachable;
 					instructions.append(Inst{ .data = address}) catch unreachable;
 					i += 1;
 					continue;
 				}
-				instructions.append(Inst{ .psh_rs = undefined}) catch unreachable;
 				instructions.append(Inst{ .jmp = undefined, }) catch unreachable;
 				instructions.append(Inst{ .data = 0}) catch unreachable;
 				if (def_backlog.getPtr(tokens[i].value.text)) |list| {
@@ -325,42 +328,153 @@ const UNQ = 18;
 const CAT = 19;
 const EQ0 = 20;
 const HLT = 21;
+const PTR = 22;
+
+const PSH_MASK = 0;
+const JMP_MASK = 1;
+const INTRINSIC_MASK = 2;
 
 pub fn code_gen(mem: *const std.mem.Allocator, instructions: Buffer(Inst)) []u8 {
 	var bytes = mem.alloc(u8, instructions.items.len*2) catch unreachable;
 	var i: u64 = 0;
-	for (instructions.items) |inst| {
+	var k: u64 = 0;
+	while (k<instructions.items.len) {
+		var inst = instructions.items[k];
 		switch (inst){
-			.psh_ds => {bytes[i] = PSH_DS;},
-			.pop_ds => {bytes[i] = POP_DS;},
-			.psh_rs => {bytes[i] = PSH_RS;},
-			.pop_rs => {bytes[i] = POP_RS;},
-			.write_ds => {bytes[i] = STR;},
-			.jmp => {bytes[i] = JMP;},
-			.nip => {bytes[i] = NIP;},
-			.rot => {bytes[i] = ROT;},
-			.dup => {bytes[i] = DUP;},
-			.cut => {bytes[i] = CUT;},
-			.ovr => {bytes[i] = OVR;},
-			.swp => {bytes[i] = SWP;},
-			.add => {bytes[i] = ADD;},
-			.sub => {bytes[i] = SUB;},
-			.mul => {bytes[i] = MUL;},
-			.div => {bytes[i] = DIV;},
-			.cat => {bytes[i] = CAT;},
-			.quote => {bytes[i] = QUT;},
-			.unquote => {bytes[i] = UNQ;},
-			.eq0 => {bytes[i] = EQ0;},
-			.halt => {bytes[i] = HLT;},
-			.data => {
-				bytes[i] = @truncate((inst.data & 0xFF00) >> 8);
+			.psh_ds => {
+				k += 1;
+				inst = instructions.items[k];
+				bytes[i] = @as(u8, @truncate((inst.data & 0xFF00) >> 8)) & (PSH_MASK << 6);
 				i += 1;
 				bytes[i] = @truncate(inst.data & 0xFF);
 				i += 1;
+			},
+			.pop_ds => {
+				bytes[i] = INTRINSIC_MASK << 6;
+				i += 1;
+				bytes[i] = POP_DS;
+				i += 1;
+			},
+			.pop_rs => {
+				bytes[i] = INTRINSIC_MASK << 6;
+				i += 1;
+				bytes[i] = POP_RS;
+				i += 1;
+			},
+			.write_ds => {
+				bytes[i] = INTRINSIC_MASK << 6;
+				i += 1;
+				bytes[i] = STR;
+				i += 1;
+			},
+			.jmp => {
+				k += 1;
+				inst = instructions.items[k];
+				bytes[i] = @as(u8, @truncate((inst.data & 0xFF00) >> 8)) & (PSH_MASK << 6);
+				i += 1;
+				bytes[i] = @truncate(inst.data & 0xFF);
+				i += 1;
+			},
+			.nip => {
+				bytes[i] = INTRINSIC_MASK << 6;
+				i += 1;
+				bytes[i] = NIP;
+				i += 1;
+			},
+			.rot => {
+				bytes[i] = INTRINSIC_MASK << 6;
+				i += 1;
+				bytes[i] = ROT;
+				i += 1;
+			},
+			.dup => {
+				bytes[i] = INTRINSIC_MASK << 6;
+				i += 1;
+				bytes[i] = DUP;
+				i += 1;
+			},
+			.cut => {
+				bytes[i] = INTRINSIC_MASK << 6;
+				i += 1;
+				bytes[i] = CUT;
+				i += 1;
+			},
+			.ovr => {
+				bytes[i] = INTRINSIC_MASK << 6;
+				i += 1;
+				bytes[i] = OVR;
+				i += 1;
+			},
+			.swp => {
+				bytes[i] = INTRINSIC_MASK << 6;
+				i += 1;
+				bytes[i] = SWP;
+				i += 1;
+			},
+			.add => {
+				bytes[i] = INTRINSIC_MASK << 6;
+				i += 1;
+				bytes[i] = ADD;
+				i += 1;
+			},
+			.sub => {
+				bytes[i] = INTRINSIC_MASK << 6;
+				i += 1;
+				bytes[i] = SUB;
+				i += 1;
+			},
+			.mul => {
+				bytes[i] = INTRINSIC_MASK << 6;
+				i += 1;
+				bytes[i] = MUL;
+				i += 1;
+			},
+			.div => {
+				bytes[i] = INTRINSIC_MASK << 6;
+				i += 1;
+				bytes[i] = DIV;
+				i += 1;
+			},
+			.cat => {
+				bytes[i] = INTRINSIC_MASK << 6;
+				i += 1;
+				bytes[i] = CAT;
+				i += 1;
+			},
+			.quote => {
+				bytes[i] = INTRINSIC_MASK << 6;
+				i += 1;
+				bytes[i] = QUT;
+				i += 1;
+			},
+			.unquote => {
+				bytes[i] = INTRINSIC_MASK << 6;
+				i += 1;
+				bytes[i] = UNQ;
+				i += 1;
+			},
+			.eq0 => {
+				bytes[i] = INTRINSIC_MASK << 6;
+				i += 1;
+				bytes[i] = EQ0;
+				i += 1;
+			},
+			.halt => {
+				bytes[i] = INTRINSIC_MASK << 6;
+				i += 1;
+				bytes[i] = HLT;
+				i += 1;
+			},
+			.ptr => {
+				bytes[i] = INTRINSIC_MASK << 6;
+				i += 1;
+				bytes[i] = PTR;
+				i += 1;
+			},
+			.data => {
 				continue;
 			}
 		}
-		i += 2;
 	}
 	return bytes;
 }
@@ -445,6 +559,15 @@ pub fn Machine(comptime CORES: u8) type {
 			self.running[core] = true;
 		}
 		
+		pub fn active(self: *Self) bool {
+			for (0..CORES)|i|{
+				if (self.running[i]){
+					return true;
+				}
+			}
+			return false;
+		}
+
 		pub fn step(self: *Self) void {
 			for (0..CORES)|i|{
 				self.step_core(@truncate(i));
@@ -455,28 +578,24 @@ pub fn Machine(comptime CORES: u8) type {
 			if (self.running[core] == false){
 				return;
 			}
-			switch (self.mem[self.ip[core]]) {
-				NOP => {},
-				PSH_DS => {
-					self.ip[core] += 2;
-					if (self.ip[core] < self.mem.len){
-						const data = (@as(Word, @intCast(self.mem[self.ip[core]])) << 8) + self.mem[self.ip[core] + 1];
-						self.ds[core].push(data);
-					}
-				},
-				POP_DS => {
-					_ = self.ds[core].pop();
-				},
-				PSH_RS => {
-					self.rs[core].push(self.ip[core]+4);
-				},
-				POP_RS => {
-					self.ip[core] = self.rs[core].pop();
-				},
-				STR => {
-					const loc = self.ds[core].pop();
-					if (loc < self.mem.len){
-						const address = (@as(Word, @intCast(self.mem[loc])) << 8) + self.mem[loc + 1];
+			const inst:u8 = self.mem[self.ip[core]];
+			const mask_mask:u8 = 3<<6;
+			const long_mask_mask:Word = 3<<14;
+			const mask:u8 = inst & mask_mask;
+			if (mask == INTRINSIC_MASK){
+				const opcode = inst & ~mask_mask;
+				switch (opcode) {
+					NOP => {},
+					POP_DS => {
+						_ = self.ds[core].pop();
+					},
+					PSH_RS => {
+					},
+					POP_RS => {
+						self.ip[core] = self.rs[core].pop();
+					},
+					STR => {
+						const address = self.ds[core].pop();
 						if (address < self.mem.len){
 							if (address % 2 == 0){
 								const data = self.ds[core].pop();
@@ -486,150 +605,162 @@ pub fn Machine(comptime CORES: u8) type {
 								return;
 							}
 						}
-					}
-					self.ds[core].push(loc);
-				},
-				JMP => {
-					self.ip[core] += 2;
-					if (self.ip[core] < self.mem.len){
-						const data = (@as(Word, @intCast(self.mem[self.ip[core]])) << 8) + self.mem[self.ip[core] + 1];
-						if (data%2==0){
-							self.ip[core] = data;
-							return;
-						}
-					}
-				},
-				NIP => {
-					const a = self.ds[core].pop();
-					_ = self.ds[core].pop();
-					self.ds[core].push(a);
-				},
-				OVR => {
-					const a = self.ds[core].pop();
-					const b = self.ds[core].pop();
-					const c = self.ds[core].pop();
-					self.ds[core].push(b);
-					self.ds[core].push(a);
-					self.ds[core].push(c);
-				},
-				DUP => {
-					const a = self.ds[core].pop();
-					self.ds[core].push(a);
-					self.ds[core].push(a);
-				},
-				CUT => {
-					const a = self.ds[core].pop();
-					const b = self.ds[core].pop();
-					_ = self.ds[core].pop();
-					self.ds[core].push(b);
-					self.ds[core].push(a);
-				},
-				ROT => {
-					const a = self.ds[core].pop();
-					const b = self.ds[core].pop();
-					const c = self.ds[core].pop();
-					self.ds[core].push(a);
-					self.ds[core].push(c);
-					self.ds[core].push(b);
-				},
-				SWP => {
-					const a = self.ds[core].pop();
-					const b = self.ds[core].pop();
-					self.ds[core].push(a);
-					self.ds[core].push(b);
-				},
-				UNQ => {
-					const loc = self.ds[core].pop();
-					if (loc < self.mem.len){
-						if (loc%2 == 0){
-							const new_ip = (@as(Word, @intCast(self.mem[loc])) << 8) + self.mem[loc + 1];
-							self.rs[core].push(self.ip[core]+4);
-							self.ip[core] = new_ip;
-							return;
-						}
-					}
-					self.ds[core].push(loc);
-				},
-				ADD => {
-					const a = self.ds[core].pop();
-					const b = self.ds[core].pop();
-					const c = a +% b;
-					self.ds[core].push(c);
-				},
-				MUL => {
-					const a = self.ds[core].pop();
-					const b = self.ds[core].pop();
-					const c = a *% b;
-					self.ds[core].push(c);
-				},
-				SUB => {
-					const a = self.ds[core].pop();
-					const b = self.ds[core].pop();
-					const c = a -% b;
-					self.ds[core].push(c);
-				},
-				DIV => {
-					const a = self.ds[core].pop();
-					const b = self.ds[core].pop();
-					const c = a / b;
-					self.ds[core].push(c);
-				},
-				QUT => {
-					const target = self.ds[core].pop();
-					if (self.hp+4 > self.mem.len){
-						self.hp = self.hp_start;
-					}
-					const save = self.hp;
-					self.mem[self.hp] = @truncate(target>>8);
-					self.hp += 1;
-					self.mem[self.hp] = @truncate(target & 0xff);
-					self.hp += 1;
-					self.mem[self.hp] = POP_RS;
-					self.hp += 2;
-					self.ds[core].push(save);
-				},
-				CAT => {
-					const right = self.ds[core].pop();
-					const left = self.ds[core].pop();
-					if (self.hp+14 > self.mem.len){
-						self.hp = self.hp_start;
-					}
-					const save = self.hp;
-					self.mem[self.hp] = PSH_DS;
-					self.hp += 2;
-					self.mem[self.hp] = @truncate(left>>8);
-					self.hp += 1;
-					self.mem[self.hp] = @truncate(left & 0xff);
-					self.hp += 1;
-					self.mem[self.hp] = UNQ;
-					self.hp += 2;
-					self.mem[self.hp] = PSH_DS;
-					self.hp += 2;
-					self.mem[self.hp] = @truncate(right>>8);
-					self.hp += 1;
-					self.mem[self.hp] = @truncate(right & 0xff);
-					self.hp += 1;
-					self.mem[self.hp] = UNQ;
-					self.hp += 2;
-					self.mem[self.hp] = POP_RS;
-					self.hp += 2;
-					self.ds[core].push(save);
-				},
-				EQ0 => {
-					const val = self.ds[core].pop();
-					if (val == 0){
+						self.ds[core].push(address);
+					},
+					NIP => {
+						const a = self.ds[core].pop();
 						_ = self.ds[core].pop();
-					}
-					else{
+						self.ds[core].push(a);
+					},
+					OVR => {
+						const a = self.ds[core].pop();
+						const b = self.ds[core].pop();
+						const c = self.ds[core].pop();
+						self.ds[core].push(b);
+						self.ds[core].push(a);
+						self.ds[core].push(c);
+					},
+					DUP => {
+						const a = self.ds[core].pop();
+						self.ds[core].push(a);
+						self.ds[core].push(a);
+					},
+					CUT => {
+						const a = self.ds[core].pop();
+						const b = self.ds[core].pop();
+						_ = self.ds[core].pop();
+						self.ds[core].push(b);
+						self.ds[core].push(a);
+					},
+					ROT => {
+						const a = self.ds[core].pop();
+						const b = self.ds[core].pop();
+						const c = self.ds[core].pop();
+						self.ds[core].push(a);
+						self.ds[core].push(c);
+						self.ds[core].push(b);
+					},
+					SWP => {
+						const a = self.ds[core].pop();
+						const b = self.ds[core].pop();
+						self.ds[core].push(a);
+						self.ds[core].push(b);
+					},
+					UNQ => {
+						const loc = self.ds[core].pop();
+						if (loc < self.mem.len){
+							if (loc%2 == 0){
+								const new_ip = (@as(Word, @intCast(self.mem[loc])) << 8) + self.mem[loc + 1];
+								self.rs[core].push(self.ip[core]+2);
+								self.ip[core] = new_ip;
+								return;
+							}
+						}
+						self.ds[core].push(loc);
+					},
+					ADD => {
+						const a = self.ds[core].pop();
+						const b = self.ds[core].pop();
+						const c = a +% b;
+						self.ds[core].push(c);
+					},
+					MUL => {
+						const a = self.ds[core].pop();
+						const b = self.ds[core].pop();
+						const c = a *% b;
+						self.ds[core].push(c);
+					},
+					SUB => {
+						const a = self.ds[core].pop();
+						const b = self.ds[core].pop();
+						const c = a -% b;
+						self.ds[core].push(c);
+					},
+					DIV => {
+						const a = self.ds[core].pop();
+						const b = self.ds[core].pop();
+						const c = a / b;
+						self.ds[core].push(c);
+					},
+					QUT => {
 						const target = self.ds[core].pop();
-						_ = self.ds[core].pop();
-						self.ds[core].push(target);
-					}
-				},
-				HLT => {
-					self.running[core] = false;
-				},
-				else => { }
+						if (self.hp+4 > self.mem.len){
+							self.hp = self.hp_start;
+						}
+						const save = self.hp;
+						self.mem[self.hp] = @truncate(target>>8);
+						self.hp += 1;
+						self.mem[self.hp] = @truncate(target & 0xff);
+						self.hp += 1;
+						self.mem[self.hp] = POP_RS;
+						self.hp += 2;
+						self.ds[core].push(save);
+					},
+					CAT => {
+						const right = self.ds[core].pop();
+						const left = self.ds[core].pop();
+						if (self.hp+14 > self.mem.len){
+							self.hp = self.hp_start;
+						}
+						const save = self.hp;
+						self.mem[self.hp] = PSH_DS;
+						self.hp += 2;
+						self.mem[self.hp] = @truncate(left>>8);
+						self.hp += 1;
+						self.mem[self.hp] = @truncate(left & 0xff);
+						self.hp += 1;
+						self.mem[self.hp] = UNQ;
+						self.hp += 2;
+						self.mem[self.hp] = PSH_DS;
+						self.hp += 2;
+						self.mem[self.hp] = @truncate(right>>8);
+						self.hp += 1;
+						self.mem[self.hp] = @truncate(right & 0xff);
+						self.hp += 1;
+						self.mem[self.hp] = UNQ;
+						self.hp += 2;
+						self.mem[self.hp] = POP_RS;
+						self.hp += 2;
+						self.ds[core].push(save);
+					},
+					EQ0 => {
+						const val = self.ds[core].pop();
+						if (val == 0){
+							_ = self.ds[core].pop();
+						}
+						else{
+							const target = self.ds[core].pop();
+							_ = self.ds[core].pop();
+							self.ds[core].push(target);
+						}
+					},
+					HLT => {
+						self.running[core] = false;
+					},
+					PTR => {
+						const loc = self.ds[core].pop();
+						if (loc < self.mem.len){
+							const data = ((@as(Word, @intCast(self.mem[loc])) << 8) + self.mem[loc + 1]) & ~long_mask_mask;
+							self.ds[core].push(data);
+							self.ip[core] += 2;
+							return;
+						}
+						self.ds[core].push(loc);
+					},
+					else => { }
+				}
+			}
+			else if (mask == PSH_MASK){
+				const data = ((@as(Word, @intCast(self.mem[self.ip[core]])) << 8) + self.mem[self.ip[core] + 1]) & ~long_mask_mask;
+				self.ds[core].push(data);
+			}
+			else if (mask == JMP_MASK){
+				self.rs[core].push(self.ip[core]+2);
+				const data = ((@as(Word, @intCast(self.mem[self.ip[core]])) << 8) + self.mem[self.ip[core] + 1]) & ~long_mask_mask;
+				if (data%2==0){
+					self.ip[core] = data;
+					return;
+				}
 			}
 			self.ip[core] += 2;
 		}
@@ -687,7 +818,13 @@ pub fn main() !void {
 	var mach = Machine(2).init(&main_mem, 1024, 256);
 	mach.load_rom(0, bytes);
 	mach.run(0, 0);
-	while (true) {
+	while (mach.active()) {
 		mach.step();
 	}
 }
+
+//TODO
+	//store semantics
+	//capabilities
+	//devices
+	//discrete comptime interrupt instructions
