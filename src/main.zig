@@ -333,7 +333,7 @@ pub fn code_gen(mem: *const std.mem.Allocator, instructions: Buffer(Inst)) []u8 
 		const inst = instructions.items[k];
 		switch (inst){
 			.psh_ds => {
-				bytes[i] = @as(u8, @truncate((inst.psh_ds & 0xFF00) >> 8)) & (PSH_MASK << 6);
+				bytes[i] = (@as(u8, @truncate((inst.psh_ds & 0xFF00) >> 8)) & 0b00111111) | (PSH_MASK << 6);
 				i += 1;
 				bytes[i] = @truncate(inst.psh_ds & 0xFF);
 				i += 1;
@@ -357,7 +357,7 @@ pub fn code_gen(mem: *const std.mem.Allocator, instructions: Buffer(Inst)) []u8 
 				i += 1;
 			},
 			.jmp => {
-				bytes[i] = @as(u8, @truncate((inst.jmp & 0xFF00) >> 8)) & (PSH_MASK << 6);
+				bytes[i] = (@as(u8, @truncate((inst.jmp & 0xFF00) >> 8)) & 0b00111111) | (JMP_MASK << 6);
 				i += 1;
 				bytes[i] = @truncate(inst.jmp & 0xFF);
 				i += 1;
@@ -749,11 +749,11 @@ pub fn Machine(comptime CORES: u8) type {
 			else if (mask == JMP_MASK){
 				self.rs[core].push(self.ip[core]+2);
 				const data = ((@as(Word, @intCast(self.mem[self.ip[core]])) << 8) + self.mem[self.ip[core] + 1]) & ~long_mask_mask;
-				std.debug.print(" -> {x:02}\n", .{data});
 				if (data%2==0){
 					self.ip[core] = data;
 					return;
 				}
+				_ = self.rs[core].pop();
 			}
 			self.ip[core] += 2;
 		}
@@ -817,7 +817,6 @@ pub fn main() !void {
 }
 
 //TODO
-	//store semantics
 	//capabilities
 	//devices
 	//discrete comptime interrupt instructions
