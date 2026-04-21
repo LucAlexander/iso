@@ -800,13 +800,13 @@ pub fn Machine(
 					SUB => {
 						const a = self.ds[core].pop();
 						const b = self.ds[core].pop();
-						const c = a -% b;
+						const c = b -% a;
 						self.ds[core].push(c);
 					},
 					DIV => {
 						const a = self.ds[core].pop();
 						const b = self.ds[core].pop();
-						const c = a / b;
+						const c = b / a;
 						self.ds[core].push(c);
 					},
 					QUT => {
@@ -1011,4 +1011,3 @@ pub fn int_nop(_: *Stack) void {
 
 //TODO
 	//devices
-	//discrete comptime interrupt instructions
