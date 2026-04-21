@@ -300,7 +300,7 @@ pub fn parse(mem: *const std.mem.Allocator, tokens: []Token, k: u64, instruction
 
 const OPCODE = u8;
 const NOP = 0;
-const PSH_DS = 1;
+const HLT = 1;
 const POP_DS = 2;
 const PSH_RS = 3;
 const POP_RS = 4;
@@ -308,7 +308,7 @@ const ADD = 5;
 const MUL = 6;
 const SUB = 7;
 const DIV = 8;
-const JMP = 9;
+const PTR = 9;
 const NIP = 10;
 const ROT = 11;
 const DUP = 12;
@@ -320,8 +320,6 @@ const QUT = 17;
 const UNQ = 18;
 const CAT = 19;
 const EQ0 = 20;
-const HLT = 21;
-const PTR = 22;
 
 const PSH_MASK = 0;
 const JMP_MASK = 1;
@@ -568,9 +566,10 @@ pub fn Machine(comptime CORES: u8) type {
 			const inst:u8 = self.mem[self.ip[core]];
 			const mask_mask:u8 = 3<<6;
 			const long_mask_mask:Word = 3<<14;
-			const mask:u8 = inst & mask_mask;
+			const mask:u8 = (inst & mask_mask) >> 6;
+			std.debug.print("{x:02} {x:02}\n", .{self.mem[self.ip[core]], self.mem[self.ip[core]+1]});
 			if (mask == INTRINSIC_MASK){
-				const opcode = inst & ~mask_mask;
+				const opcode = self.mem[self.ip[core]+1];
 				switch (opcode) {
 					NOP => {},
 					POP_DS => {
@@ -679,8 +678,10 @@ pub fn Machine(comptime CORES: u8) type {
 						self.hp += 1;
 						self.mem[self.hp] = @truncate(target & 0xff);
 						self.hp += 1;
+						self.mem[self.hp] = (INTRINSIC_MASK << 6);
+						self.hp += 1;
 						self.mem[self.hp] = POP_RS;
-						self.hp += 2;
+						self.hp += 1;
 						self.ds[core].push(save);
 					},
 					CAT => {
@@ -690,24 +691,28 @@ pub fn Machine(comptime CORES: u8) type {
 							self.hp = self.hp_start;
 						}
 						const save = self.hp;
-						self.mem[self.hp] = PSH_DS;
-						self.hp += 2;
 						self.mem[self.hp] = @truncate(left>>8);
+						self.mem[self.hp] &= (PSH_MASK << 6);
 						self.hp += 1;
 						self.mem[self.hp] = @truncate(left & 0xff);
 						self.hp += 1;
+						self.mem[self.hp] = (INTRINSIC_MASK << 6);
+						self.hp += 1;
 						self.mem[self.hp] = UNQ;
-						self.hp += 2;
-						self.mem[self.hp] = PSH_DS;
-						self.hp += 2;
+						self.hp += 1;
 						self.mem[self.hp] = @truncate(right>>8);
+						self.mem[self.hp] &= (PSH_MASK << 6);
 						self.hp += 1;
 						self.mem[self.hp] = @truncate(right & 0xff);
 						self.hp += 1;
+						self.mem[self.hp] = (INTRINSIC_MASK << 6);
+						self.hp += 1;
 						self.mem[self.hp] = UNQ;
-						self.hp += 2;
+						self.hp += 1;
+						self.mem[self.hp] = (INTRINSIC_MASK << 6);
+						self.hp += 1;
 						self.mem[self.hp] = POP_RS;
-						self.hp += 2;
+						self.hp += 1;
 						self.ds[core].push(save);
 					},
 					EQ0 => {
@@ -744,6 +749,7 @@ pub fn Machine(comptime CORES: u8) type {
 			else if (mask == JMP_MASK){
 				self.rs[core].push(self.ip[core]+2);
 				const data = ((@as(Word, @intCast(self.mem[self.ip[core]])) << 8) + self.mem[self.ip[core] + 1]) & ~long_mask_mask;
+				std.debug.print(" -> {x:02}\n", .{data});
 				if (data%2==0){
 					self.ip[core] = data;
 					return;
