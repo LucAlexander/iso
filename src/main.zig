@@ -581,8 +581,8 @@ const Cap = struct {
 	ptr: Word,
 	len: Word,
 
-	pub fn allow_read(self: *const Cap, address: Word, hp_start: Word) bool {
-		if (address > hp_start){
+	pub fn allow_read(self: *const Cap, address: Word, hp_start: Word, hp_end: Word) bool {
+		if (address > hp_start and address < hp_end){
 			return false;
 		}
 		if (self.perms & CAP_READ != 0) {
@@ -591,8 +591,8 @@ const Cap = struct {
 		return false;
 	}
 
-	pub fn allow_write(self: *const Cap, address: Word, hp_start: Word) bool {
-		if (address > hp_start){
+	pub fn allow_write(self: *const Cap, address: Word, hp_start: Word, hp_end: Word) bool {
+		if (address > hp_start and address < hp_end){
 			return false;
 		}
 		if (self.perms & CAP_WRITE != 0) {
@@ -601,8 +601,8 @@ const Cap = struct {
 		return false;
 	}
 
-	pub fn allow_execute(self: *const Cap, address: Word, hp_start: Word) bool {
-		if (address > hp_start){
+	pub fn allow_execute(self: *const Cap, address: Word, hp_start: Word, hp_end: Word) bool {
+		if (address > hp_start and address < hp_end){
 			return false;
 		}
 		if (self.perms & CAP_EXECUTE != 0) {
@@ -614,10 +614,12 @@ const Cap = struct {
 
 pub fn Machine(
 	comptime CORES: u8,
-	comptime int0: fn(*Stack) void ,
-	comptime int1: fn(*Stack) void ,
-	comptime int2: fn(*Stack) void ,
-	comptime int3: fn(*Stack) void 
+	comptime DEVICES: u8,
+	comptime DEVICE_LEN: u8,
+	comptime int0: fn(*Stack, u8, u8, []u8) void ,
+	comptime int1: fn(*Stack, u8, u8, []u8) void ,
+	comptime int2: fn(*Stack, u8, u8, []u8) void ,
+	comptime int3: fn(*Stack, u8, u8, []u8) void 
 ) type {
 	return struct {
 		const Self = @This();
@@ -627,8 +629,10 @@ pub fn Machine(
 		cs: [CORES]CapStack,
 		rs: [CORES]Stack,
 		ip: [CORES]Word,
+		dev: [DEVICES][] u8,
 		hp: Word,
 		hp_start: Word,
+		hp_end: Word,
 		running: [CORES]bool,
 
 		pub fn init(mem: *const std.mem.Allocator, size: Word, ss: Word, css: Word) Self {
@@ -639,8 +643,10 @@ pub fn Machine(
 				.cs = undefined,
 				.rs = undefined,
 				.ip = undefined,
+				.dev = undefined,
 				.hp = 0,
 				.hp_start = 0,
+				.hp_end = 0,
 				.running = undefined
 			};
 			for (0..size/2) |i| {
@@ -668,6 +674,8 @@ pub fn Machine(
 			}
 			self.hp = i;
 			self.hp_start = i;
+			const offset:Word = DEVICES*DEVICE_LEN;
+			self.hp_end = @as(Word, @truncate(self.mem.len))-offset;
 			for (0..CORES) |core| {
 				self.cs[core].push(Cap{
 					.perms = CAP_READ | CAP_WRITE | CAP_EXECUTE,
@@ -723,7 +731,7 @@ pub fn Machine(
 					STR => {
 						const cap = self.cs[core].top();
 						const address = self.ds[core].pop();
-						if (address < self.mem.len and cap.allow_write(address, self.hp_start)){
+						if (address < self.mem.len and cap.allow_write(address, self.hp_start, self.hp_end)){
 							if (address % 2 == 0){
 								const data = self.ds[core].pop();
 								self.mem[address] = @truncate(data >> 8);
@@ -811,7 +819,7 @@ pub fn Machine(
 					},
 					QUT => {
 						const target = self.ds[core].pop();
-						if (self.hp+4 > self.mem.len){
+						if (self.hp+4 > self.hp_end){
 							self.hp = self.hp_start;
 						}
 						const save = self.hp;
@@ -841,7 +849,7 @@ pub fn Machine(
 					CAT => {
 						const right = self.ds[core].pop();
 						const left = self.ds[core].pop();
-						if (self.hp+14 > self.mem.len){
+						if (self.hp+14 > self.hp_end){
 							self.hp = self.hp_start;
 						}
 						const save = self.hp;
@@ -882,18 +890,19 @@ pub fn Machine(
 					},
 					INT => {
 						const val = self.ds[core].top();
+						const offset = DEVICE_LEN*DEVICES;
 						switch (val){
 							0 => {
-								int0(&self.ds[core]);
+								int0(&self.ds[core], DEVICES, DEVICE_LEN, self.mem[self.mem.len-offset..self.mem.len]);
 							},
 							1 => {
-								int1(&self.ds[core]);
+								int1(&self.ds[core], DEVICES, DEVICE_LEN, self.mem[self.mem.len-offset..self.mem.len]);
 							},
 							2 => {
-								int2(&self.ds[core]);
+								int2(&self.ds[core], DEVICES, DEVICE_LEN, self.mem[self.mem.len-offset..self.mem.len]);
 							},
 							3 => {
-								int3(&self.ds[core]);
+								int3(&self.ds[core], DEVICES, DEVICE_LEN, self.mem[self.mem.len-offset..self.mem.len]);
 							},
 							else => {}
 						}
@@ -916,7 +925,7 @@ pub fn Machine(
 			}
 			else if (mask == PSH_MASK){
 				const cap = self.cs[core].top();
-				if (cap.allow_read(self.ip[core], self.hp_start)){
+				if (cap.allow_read(self.ip[core], self.hp_start, self.hp_end)){
 					const data = ((@as(Word, @intCast(self.mem[self.ip[core]])) << 8) + self.mem[self.ip[core] + 1]) & ~long_mask_mask;
 					self.ds[core].push(data);
 				}
@@ -925,7 +934,7 @@ pub fn Machine(
 				self.rs[core].push(self.ip[core]+2);
 				const cap = self.cs[core].top();
 				const data = ((@as(Word, @intCast(self.mem[self.ip[core]])) << 8) + self.mem[self.ip[core] + 1]) & ~long_mask_mask;
-				if (data%2==0 and cap.allow_execute(data, self.hp_start)){
+				if (data%2==0 and cap.allow_execute(data, self.hp_start, self.hp_end)){
 					self.ip[core] = data;
 					return;
 				}
@@ -986,6 +995,8 @@ pub fn main() !void {
 	std.debug.print("\n", .{});
 	var mach = Machine(
 		2,
+		1,
+		64,
 		int_print,
 		int_nop,
 		int_nop,
@@ -1001,13 +1012,12 @@ pub fn main() !void {
 	}
 }
 
-pub fn int_print(ds: *Stack) void {
+pub fn int_print(ds: *Stack, _: u8, _: u8, _: []u8) void {
 	_ = ds.pop();
 	std.debug.print("{x:04}", .{ds.top()});
 }
 
-pub fn int_nop(_: *Stack) void {
+pub fn int_nop(_: *Stack, _:u8, _:u8, _:[]u8) void {
 }
 
-//TODO
-	//devices
+//TODO devices
