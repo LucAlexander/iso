@@ -116,6 +116,7 @@ const Inst = union(enum){
 	unquote,
 	eq0,
 	halt,
+	interrupt,
 	csh,
 	cop,
 	ptr,
@@ -260,6 +261,11 @@ pub fn parse(mem: *const std.mem.Allocator, tokens: []Token, k: u64, instruction
 					i += 1;
 					continue;
 				}
+				if (std.mem.eql(u8, tokens[i].value.text, "int")){
+					instructions.append(Inst{ .interrupt = undefined }) catch unreachable;
+					i += 1;
+					continue;
+				}
 				if (std.mem.eql(u8, tokens[i].value.text, "hlt")){
 					instructions.append(Inst{ .halt = undefined }) catch unreachable;
 					i += 1;
@@ -333,6 +339,7 @@ const UNQ = 18;
 const CAT = 19;
 const CSH = 20;
 const COP = 21;
+const INT = 22;
 
 const PSH_MASK = 0;
 const JMP_MASK = 1;
@@ -477,6 +484,12 @@ pub fn code_gen(mem: *const std.mem.Allocator, instructions: Buffer(Inst)) []u8 
 				bytes[i] = HLT;
 				i += 1;
 			},
+			.interrupt => {
+				bytes[i] = INTRINSIC_MASK << 6;
+				i += 1;
+				bytes[i] = INT;
+				i += 1;
+			},
 			.ptr => {
 				bytes[i] = INTRINSIC_MASK << 6;
 				i += 1;
@@ -599,7 +612,13 @@ const Cap = struct {
 	}
 };
 
-pub fn Machine(comptime CORES: u8) type {
+pub fn Machine(
+	comptime CORES: u8,
+	comptime int0: fn(*Stack) void ,
+	comptime int1: fn(*Stack) void ,
+	comptime int2: fn(*Stack) void ,
+	comptime int3: fn(*Stack) void 
+) type {
 	return struct {
 		const Self = @This();
 		mem: []u8,
@@ -690,7 +709,6 @@ pub fn Machine(comptime CORES: u8) type {
 			const mask_mask:u8 = 3<<6;
 			const long_mask_mask:Word = 3<<14;
 			const mask:u8 = (inst & mask_mask) >> 6;
-			std.debug.print("{x:02} {x:02} ", .{self.mem[self.ip[core]], self.mem[self.ip[core]+1]});
 			if (mask == INTRINSIC_MASK){
 				const opcode = self.mem[self.ip[core]+1];
 				switch (opcode) {
@@ -862,6 +880,24 @@ pub fn Machine(comptime CORES: u8) type {
 							self.ds[core].push(target);
 						}
 					},
+					INT => {
+						const val = self.ds[core].top();
+						switch (val){
+							0 => {
+								int0(&self.ds[core]);
+							},
+							1 => {
+								int1(&self.ds[core]);
+							},
+							2 => {
+								int2(&self.ds[core]);
+							},
+							3 => {
+								int3(&self.ds[core]);
+							},
+							else => {}
+						}
+					},
 					HLT => {
 						self.running[core] = false;
 					},
@@ -948,7 +984,16 @@ pub fn main() !void {
 		std.debug.print("{x:02} ", .{b});
 	}
 	std.debug.print("\n", .{});
-	var mach = Machine(2).init(&main_mem, 1024, 256, 32);
+	var mach = Machine(
+		2,
+		int_print,
+		int_nop,
+		int_nop,
+		int_nop
+	).init(
+		&main_mem,
+		1024, 256, 32
+	);
 	mach.load_rom(0, bytes);
 	mach.run(0, 0);
 	while (mach.active()) {
@@ -956,7 +1001,14 @@ pub fn main() !void {
 	}
 }
 
+pub fn int_print(ds: *Stack) void {
+	_ = ds.pop();
+	std.debug.print("{x:04}", .{ds.top()});
+}
+
+pub fn int_nop(_: *Stack) void {
+}
+
 //TODO
-	//capabilities
 	//devices
 	//discrete comptime interrupt instructions
