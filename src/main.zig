@@ -116,6 +116,8 @@ const Inst = union(enum){
 	unquote,
 	eq0,
 	halt,
+	csh,
+	cop,
 	ptr,
 };
 
@@ -263,6 +265,16 @@ pub fn parse(mem: *const std.mem.Allocator, tokens: []Token, k: u64, instruction
 					i += 1;
 					continue;
 				}
+				if (std.mem.eql(u8, tokens[i].value.text, "csh")){
+					instructions.append(Inst{ .csh = undefined }) catch unreachable;
+					i += 1;
+					continue;
+				}
+				if (std.mem.eql(u8, tokens[i].value.text, "cop")){
+					instructions.append(Inst{ .cop = undefined }) catch unreachable;
+					i += 1;
+					continue;
+				}
 				if (std.mem.eql(u8, tokens[i].value.text, "ptr")){
 					instructions.append(Inst{ .ptr = undefined }) catch unreachable;
 					i += 1;
@@ -319,6 +331,8 @@ const STR = 16;
 const QUT = 17;
 const UNQ = 18;
 const CAT = 19;
+const CSH = 20;
+const COP = 21;
 
 const PSH_MASK = 0;
 const JMP_MASK = 1;
@@ -427,6 +441,18 @@ pub fn code_gen(mem: *const std.mem.Allocator, instructions: Buffer(Inst)) []u8 
 				bytes[i] = CAT;
 				i += 1;
 			},
+			.csh => {
+				bytes[i] = INTRINSIC_MASK << 6;
+				i += 1;
+				bytes[i] = CSH;
+				i += 1;
+			},
+			.cop => {
+				bytes[i] = INTRINSIC_MASK << 6;
+				i += 1;
+				bytes[i] = COP;
+				i += 1;
+			},
 			.quote => {
 				bytes[i] = INTRINSIC_MASK << 6;
 				i += 1;
@@ -463,6 +489,41 @@ pub fn code_gen(mem: *const std.mem.Allocator, instructions: Buffer(Inst)) []u8 
 	return bytes;
 }
 
+const CapStack = struct {
+	data: []Cap,
+	cursor: Word,
+
+	pub fn init(mem: *const std.mem.Allocator, size: Word) CapStack {
+		return CapStack{
+			.data = mem.alloc(Cap, size) catch unreachable,
+			.cursor = 0
+		};
+	}
+
+	pub fn push(self: *CapStack, item: Cap) void {
+		if (self.cursor == self.data.len){
+			self.cursor = 0;
+		}
+		self.data[self.cursor] = item;
+		self.cursor += 1;
+	}
+
+	pub fn top(self: *CapStack) Cap {
+		if (self.cursor == 0){
+			return self.data[self.data.len-1];
+		}
+		return self.data[self.cursor-1];
+	}
+	
+	pub fn pop(self: *CapStack) Cap {
+		if (self.cursor == 0){
+			self.cursor = @intCast(self.data.len);
+		}
+		self.cursor -= 1;
+		return self.data[self.cursor];
+	}
+};
+
 const Stack = struct {
 	data: []Word,
 	cursor: Word,
@@ -498,29 +559,51 @@ const Stack = struct {
 	}
 };
 
+const CAP_READ = 1;
+const CAP_WRITE = 2;
+const CAP_EXECUTE = 4;
+
+const Cap = struct {
+	perms: u8,
+	ptr: Word,
+	len: Word
+};
+
 pub fn Machine(comptime CORES: u8) type {
 	return struct {
 		const Self = @This();
 		mem: []u8,
+		cap: []Cap,
 		ds: [CORES]Stack,
+		cs: [CORES]CapStack,
 		rs: [CORES]Stack,
 		ip: [CORES]Word,
 		hp: Word,
 		hp_start: Word,
 		running: [CORES]bool,
 
-		pub fn init(mem: *const std.mem.Allocator, size: Word, ss: Word) Self {
+		pub fn init(mem: *const std.mem.Allocator, size: Word, ss: Word, css: Word) Self {
 			var mach = Self{
 				.mem = mem.alloc(u8, size) catch unreachable,
+				.cap = mem.alloc(Cap, size/2) catch unreachable,
 				.ds = undefined,
+				.cs = undefined,
 				.rs = undefined,
 				.ip = undefined,
 				.hp = 0,
 				.hp_start = 0,
 				.running = undefined
 			};
+			for (0..size) |i| {
+				mach.cap[i] = Cap{
+					.perms=0,
+					.ptr = 0,
+					.len = 0
+				};
+			}
 			for (0..CORES) |i| {
 				mach.ds[i] = Stack.init(mem, ss);
+				mach.cs[i] = CapStack.init(mem, css);
 				mach.rs[i] = Stack.init(mem, ss);
 				mach.ip[i] = 0;
 				mach.running[i] = false;
@@ -682,6 +765,19 @@ pub fn Machine(comptime CORES: u8) type {
 						self.hp += 1;
 						self.ds[core].push(save);
 					},
+					CSH => {
+						const address = self.ds[core].pop();
+						if (address/2 < self.cap[core].len){
+							const data = self.cap[address/2];
+							self.cs[core].push(data);
+							self.ip[core] += 2;
+							return;
+						}
+						self.ds[core].push(address);
+					},
+					COP => {
+						_ = self.cs[core].pop();
+					},
 					CAT => {
 						const right = self.ds[core].pop();
 						const left = self.ds[core].pop();
@@ -806,7 +902,7 @@ pub fn main() !void {
 		std.debug.print("{x:02} ", .{b});
 	}
 	std.debug.print("\n", .{});
-	var mach = Machine(2).init(&main_mem, 1024, 256);
+	var mach = Machine(2).init(&main_mem, 1024, 256, 8);
 	mach.load_rom(0, bytes);
 	mach.run(0, 0);
 	while (mach.active()) {

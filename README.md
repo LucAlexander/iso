@@ -23,5 +23,7 @@ div: a b -- a/b
 eq0: a b c -- (c==0) ? a : b
 hlt: -- halt machine
 ptr: (a) -- a as a literaladdress
+csh: a -- push capability of a
+cop: -- pop capability
 
 ```
