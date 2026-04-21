@@ -559,14 +559,33 @@ const Stack = struct {
 	}
 };
 
-const CAP_READ = 1;
-const CAP_WRITE = 2;
-const CAP_EXECUTE = 4;
+const CAP_WRITE = 1;
+const CAP_EXECUTE = 2;
 
 const Cap = struct {
 	perms: u8,
 	ptr: Word,
-	len: Word
+	len: Word,
+
+	pub fn allow_write(self: *const Cap, address: Word, hp_start: Word) bool {
+		if (address > hp_start){
+			return false;
+		}
+		if (self.perms & CAP_WRITE != 0) {
+			return address > self.ptr and address < self.ptr + self.len;
+		}
+		return false;
+	}
+
+	pub fn allow_execute(self: *const Cap, address: Word, hp_start: Word) bool {
+		if (address > hp_start){
+			return false;
+		}
+		if (self.perms & CAP_EXECUTE != 0) {
+			return address > self.ptr and address < self.ptr + self.len;
+		}
+		return false;
+	}
 };
 
 pub fn Machine(comptime CORES: u8) type {
@@ -662,8 +681,9 @@ pub fn Machine(comptime CORES: u8) type {
 						return;
 					},
 					STR => {
+						const cap = self.cs[core].top();
 						const address = self.ds[core].pop();
-						if (address < self.mem.len){
+						if (address < self.mem.len and cap.allow_write(address, self.hp_start)){
 							if (address % 2 == 0){
 								const data = self.ds[core].pop();
 								self.mem[address] = @truncate(data >> 8);
@@ -842,8 +862,9 @@ pub fn Machine(comptime CORES: u8) type {
 			}
 			else if (mask == JMP_MASK){
 				self.rs[core].push(self.ip[core]+2);
+				const cap = self.cs[core].top();
 				const data = ((@as(Word, @intCast(self.mem[self.ip[core]])) << 8) + self.mem[self.ip[core] + 1]) & ~long_mask_mask;
-				if (data%2==0){
+				if (data%2==0 and cap.allow_execute(data, self.hp_start)){
 					self.ip[core] = data;
 					return;
 				}
@@ -902,7 +923,7 @@ pub fn main() !void {
 		std.debug.print("{x:02} ", .{b});
 	}
 	std.debug.print("\n", .{});
-	var mach = Machine(2).init(&main_mem, 1024, 256, 8);
+	var mach = Machine(2).init(&main_mem, 1024, 256, 32);
 	mach.load_rom(0, bytes);
 	mach.run(0, 0);
 	while (mach.active()) {
