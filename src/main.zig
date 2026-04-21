@@ -96,11 +96,11 @@ pub fn tokenize(mem: *const std.mem.Allocator, text: []const u8) Buffer(Token) {
 }
 
 const Inst = union(enum){
-	psh_ds,
+	psh_ds: Word,
 	pop_ds,
 	pop_rs,
 	write_ds,
-	jmp,
+	jmp: Word,
 	nip,
 	rot,
 	dup,
@@ -117,7 +117,6 @@ const Inst = union(enum){
 	eq0,
 	halt,
 	ptr,
-	data: Word
 };
 
 const ParseError = error {
@@ -130,15 +129,13 @@ pub fn parse(mem: *const std.mem.Allocator, tokens: []Token, k: u64, instruction
 		switch (tokens[i].tag){
 			open_quote => {
 				i += 1;
-				instructions.append(Inst{.jmp=undefined}) catch unreachable;
 				const save = instructions.items.len;
-				instructions.append(Inst{.data=0}) catch unreachable;
+				instructions.append(Inst{.jmp=0}) catch unreachable;
 				const value:Word = @truncate(instructions.items.len*2);
 				i = try parse(mem, tokens, i, instructions, close_quote, defs, def_backlog);
 				instructions.append(Inst{ .pop_rs=undefined}) catch unreachable;
-				instructions.items[save].data = @intCast(instructions.items.len*2);
-				instructions.append(Inst{ .psh_ds=undefined}) catch unreachable;
-				instructions.append(Inst{.data=value}) catch unreachable;
+				instructions.items[save].jmp = @intCast(instructions.items.len*2);
+				instructions.append(Inst{ .psh_ds=value}) catch unreachable;
 				i += 1;
 				continue;
 			},
@@ -158,16 +155,15 @@ pub fn parse(mem: *const std.mem.Allocator, tokens: []Token, k: u64, instruction
 					return ParseError.UnexpectedToken;
 				}
 				i += 1;
-				instructions.append(Inst{.jmp=undefined}) catch unreachable;
 				const save = instructions.items.len;
-				instructions.append(Inst{.data=0}) catch unreachable;
+				instructions.append(Inst{.jmp=0}) catch unreachable;
 				i = try parse(mem, tokens, i, instructions, close_word, defs, def_backlog);
 				instructions.append(Inst{ .pop_rs=undefined}) catch unreachable;
 				defs.put(name.value.text, loc) catch unreachable;
-				instructions.items[save].data = @intCast(instructions.items.len*2);
+				instructions.items[save].jmp= @intCast(instructions.items.len*2);
 				if (def_backlog.get(name.value.text)) |list| {
 					for (list.items) |index| {
-						instructions.items[index].data = loc;
+						instructions.items[index].jmp = loc;
 					}
 				}
 				i += 1;
@@ -273,13 +269,11 @@ pub fn parse(mem: *const std.mem.Allocator, tokens: []Token, k: u64, instruction
 					continue;
 				}
 				if (defs.get(tokens[i].value.text)) |address| {
-					instructions.append(Inst{ .jmp=undefined, }) catch unreachable;
-					instructions.append(Inst{ .data = address}) catch unreachable;
+					instructions.append(Inst{ .jmp=address, }) catch unreachable;
 					i += 1;
 					continue;
 				}
-				instructions.append(Inst{ .jmp = undefined, }) catch unreachable;
-				instructions.append(Inst{ .data = 0}) catch unreachable;
+				instructions.append(Inst{ .jmp = 0}) catch unreachable;
 				if (def_backlog.getPtr(tokens[i].value.text)) |list| {
 					list.append(instructions.items.len-1) catch unreachable;
 				}
@@ -292,8 +286,7 @@ pub fn parse(mem: *const std.mem.Allocator, tokens: []Token, k: u64, instruction
 				continue;
 			},
 			number => {
-				instructions.append(Inst{ .psh_ds = undefined}) catch unreachable;
-				instructions.append(Inst{ .data = tokens[i].value.numeric }) catch unreachable;
+				instructions.append(Inst{ .psh_ds = tokens[i].value.numeric}) catch unreachable;
 				i += 1;
 				continue;
 			},
@@ -339,14 +332,12 @@ pub fn code_gen(mem: *const std.mem.Allocator, instructions: Buffer(Inst)) []u8 
 	var i: u64 = 0;
 	var k: u64 = 0;
 	while (k<instructions.items.len) {
-		var inst = instructions.items[k];
+		const inst = instructions.items[k];
 		switch (inst){
 			.psh_ds => {
-				k += 1;
-				inst = instructions.items[k];
-				bytes[i] = @as(u8, @truncate((inst.data & 0xFF00) >> 8)) & (PSH_MASK << 6);
+				bytes[i] = @as(u8, @truncate((inst.psh_ds & 0xFF00) >> 8)) & (PSH_MASK << 6);
 				i += 1;
-				bytes[i] = @truncate(inst.data & 0xFF);
+				bytes[i] = @truncate(inst.psh_ds & 0xFF);
 				i += 1;
 			},
 			.pop_ds => {
@@ -368,11 +359,9 @@ pub fn code_gen(mem: *const std.mem.Allocator, instructions: Buffer(Inst)) []u8 
 				i += 1;
 			},
 			.jmp => {
-				k += 1;
-				inst = instructions.items[k];
-				bytes[i] = @as(u8, @truncate((inst.data & 0xFF00) >> 8)) & (PSH_MASK << 6);
+				bytes[i] = @as(u8, @truncate((inst.jmp & 0xFF00) >> 8)) & (PSH_MASK << 6);
 				i += 1;
-				bytes[i] = @truncate(inst.data & 0xFF);
+				bytes[i] = @truncate(inst.jmp & 0xFF);
 				i += 1;
 			},
 			.nip => {
@@ -471,10 +460,8 @@ pub fn code_gen(mem: *const std.mem.Allocator, instructions: Buffer(Inst)) []u8 
 				bytes[i] = PTR;
 				i += 1;
 			},
-			.data => {
-				continue;
-			}
 		}
+		k += 1;
 	}
 	return bytes;
 }
