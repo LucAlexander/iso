@@ -559,13 +559,24 @@ const Stack = struct {
 	}
 };
 
-const CAP_WRITE = 1;
-const CAP_EXECUTE = 2;
+const CAP_READ = 1;
+const CAP_WRITE = 2;
+const CAP_EXECUTE = 4;
 
 const Cap = struct {
 	perms: u8,
 	ptr: Word,
 	len: Word,
+
+	pub fn allow_read(self: *const Cap, address: Word, hp_start: Word) bool {
+		if (address > hp_start){
+			return false;
+		}
+		if (self.perms & CAP_READ != 0) {
+			return address > self.ptr and address < self.ptr + self.len;
+		}
+		return false;
+	}
 
 	pub fn allow_write(self: *const Cap, address: Word, hp_start: Word) bool {
 		if (address > hp_start){
@@ -640,7 +651,7 @@ pub fn Machine(comptime CORES: u8) type {
 			self.hp_start = i;
 			for (0..CORES) |core| {
 				self.cs[core].push(Cap{
-					.perms = CAP_WRITE | CAP_EXECUTE,
+					.perms = CAP_READ | CAP_WRITE | CAP_EXECUTE,
 					.ptr = loc,
 					.len = @truncate(bytes.len)
 				});
@@ -868,8 +879,11 @@ pub fn Machine(comptime CORES: u8) type {
 				}
 			}
 			else if (mask == PSH_MASK){
-				const data = ((@as(Word, @intCast(self.mem[self.ip[core]])) << 8) + self.mem[self.ip[core] + 1]) & ~long_mask_mask;
-				self.ds[core].push(data);
+				const cap = self.cs[core].top();
+				if (cap.allow_read(self.ip[core], self.hp_start)){
+					const data = ((@as(Word, @intCast(self.mem[self.ip[core]])) << 8) + self.mem[self.ip[core] + 1]) & ~long_mask_mask;
+					self.ds[core].push(data);
+				}
 			}
 			else if (mask == JMP_MASK){
 				self.rs[core].push(self.ip[core]+2);
