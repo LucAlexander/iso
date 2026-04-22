@@ -975,7 +975,7 @@ pub fn Machine(
 			self.ip[core] += 2;
 		}
 
-		pub fn debugger(self: *Self, core: u8) void {
+		pub fn debugger(self: *Self, mem: *const std.mem.Allocator, core: u8) void {
 			const stdout = std.io.getStdOut().writer();
 			while (self.running[core]){
 				stdout.print("\x1b[2J\x1b[H", .{}) catch unreachable;
@@ -1015,8 +1015,39 @@ pub fn Machine(
 					else{
 						stdout.print("-", .{}) catch unreachable;
 					}
-					stdout.print(" {x:04} {x:04}", .{cap.ptr, cap.len}) catch unreachable;
+					stdout.print(" {x:04} {x:04}\n", .{cap.ptr, cap.len}) catch unreachable;
 				}
+				stdout.print("\x1b[H", .{}) catch unreachable;
+				const rs_rows = @min(32, self.rs[core].cursor);
+				for (0..rs_rows) |k| {
+					stdout.print("                                     ", .{}) catch unreachable;
+					stdout.print("{x:04}\n", .{self.rs[core].data[(self.rs[core].cursor-1)-k]}) catch unreachable;
+				}
+				stdout.print("\x1b[H", .{}) catch unreachable;
+				const ds_rows = @min(32, self.ds[core].cursor);
+				for (0..ds_rows) |k| {
+					stdout.print("                                ", .{}) catch unreachable;
+					stdout.print("{x:04}\n", .{self.ds[core].data[(self.ds[core].cursor-1)-k]}) catch unreachable;
+				}
+				stdout.print("\x1b[H", .{}) catch unreachable;
+				const ip_signed: i64 = self.ip[core];
+				const ip_offset:u64 = @max(0, ip_signed-32);
+				var k: u64 = ip_offset;
+				while (k < ip_offset+64) {
+					stdout.print("                           ", .{}) catch unreachable;
+					const val = (@as(Word, @intCast(self.mem[k])) << 8) + self.mem[k+1];
+					if (k == self.ip[core]){
+						stdout.print("\x1b[1;42m{x:04}\x1b[0m\n", .{val}) catch unreachable;
+					}
+					else{
+						stdout.print("{x:04}\n", .{val}) catch unreachable;
+					}
+					k += 2;
+				}
+				stdout.print("\x1b[H", .{}) catch unreachable;
+				const byte_slice = self.mem[ip_offset..ip_offset+64];
+				const text = disassemble(mem, byte_slice);
+				stdout.print("{s}", .{text}) catch unreachable;
 				var stdin = std.io.getStdIn().reader();
 				var buffer: [1]u8 = undefined;
 				_ = stdin.read(&buffer) catch unreachable;
@@ -1147,7 +1178,7 @@ pub fn main() !void {
 	);
 	mach.load_rom(0, bytes);
 	mach.run(0, 0);
-	mach.debugger(0);
+	mach.debugger(&main_mem, 0);
 	while (mach.active()) {
 		mach.step();
 	}
