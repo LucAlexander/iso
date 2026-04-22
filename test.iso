@@ -1,0 +1,16 @@
+:print 0 int;
+:num_to_ascii 48 add;
+:nl 10 1 print;
+
+"hello world" print nl
+
+:hp 4;
+:heal hp 1 add (hp) ptr str;
+:damage hp 1 sub (hp) ptr str;
+
+hp num_to_ascii 1 print
+damage
+" " print
+hp num_to_ascii 1 print nl
+hlt
+
