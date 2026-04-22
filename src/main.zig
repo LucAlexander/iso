@@ -575,6 +575,7 @@ const Stack = struct {
 const CAP_READ = 1;
 const CAP_WRITE = 2;
 const CAP_EXECUTE = 4;
+const CAP_TRAP = 5;
 
 const Cap = struct {
 	perms: u8,
@@ -606,6 +607,16 @@ const Cap = struct {
 			return false;
 		}
 		if (self.perms & CAP_EXECUTE != 0) {
+			return address > self.ptr and address < self.ptr + self.len;
+		}
+		return false;
+	}
+
+	pub fn allow_trap(self: *const Cap, address: Word, hp_start: Word, hp_end: Word) bool {
+		if (address > hp_start and address < hp_end){
+			return false;
+		}
+		if (self.perms & CAP_TRAP != 0) {
 			return address > self.ptr and address < self.ptr + self.len;
 		}
 		return false;
@@ -683,7 +694,7 @@ pub fn Machine(
 			self.hp_end = @as(Word, @truncate(self.mem.len))-offset;
 			for (0..CORES) |core| {
 				self.cs[core].push(Cap{
-					.perms = CAP_READ | CAP_WRITE | CAP_EXECUTE,
+					.perms = CAP_READ | CAP_WRITE | CAP_EXECUTE | CAP_TRAP,
 					.ptr = loc,
 					.len = @truncate(self.mem.len)
 				});
@@ -921,22 +932,25 @@ pub fn Machine(
 						}
 					},
 					INT => {
-						const val = self.ds[core].top();
-						const offset = DEVICE_LEN*DEVICES;
-						switch (val){
-							0 => {
-								int0(&self.ds[core], DEVICES, DEVICE_LEN, self.mem[self.mem.len-offset..self.mem.len]);
-							},
-							1 => {
-								int1(&self.ds[core], DEVICES, DEVICE_LEN, self.mem[self.mem.len-offset..self.mem.len]);
-							},
-							2 => {
-								int2(&self.ds[core], DEVICES, DEVICE_LEN, self.mem[self.mem.len-offset..self.mem.len]);
-							},
-							3 => {
-								int3(&self.ds[core], DEVICES, DEVICE_LEN, self.mem[self.mem.len-offset..self.mem.len]);
-							},
-							else => {}
+						const cap = self.cs[core].top();
+						if (cap.allow_trap(self.ip[core], self.hp_start, self.hp_end)){
+							const val = self.ds[core].top();
+							const offset = DEVICE_LEN*DEVICES;
+							switch (val){
+								0 => {
+									int0(&self.ds[core], DEVICES, DEVICE_LEN, self.mem[self.mem.len-offset..self.mem.len]);
+								},
+								1 => {
+									int1(&self.ds[core], DEVICES, DEVICE_LEN, self.mem[self.mem.len-offset..self.mem.len]);
+								},
+								2 => {
+									int2(&self.ds[core], DEVICES, DEVICE_LEN, self.mem[self.mem.len-offset..self.mem.len]);
+								},
+								3 => {
+									int3(&self.ds[core], DEVICES, DEVICE_LEN, self.mem[self.mem.len-offset..self.mem.len]);
+								},
+								else => {}
+							}
 						}
 					},
 					HLT => {
@@ -995,7 +1009,7 @@ pub fn Machine(
 				stdout.print("\x1b[H", .{}) catch unreachable;
 				const cs_rows = @min(32, self.cs[core].cursor);
 				for (0..cs_rows) |k| {
-					stdout.print("                                          ", .{}) catch unreachable;
+					stdout.print("                                         ", .{}) catch unreachable;
 					const cap = self.cs[core].data[(self.cs[core].cursor-1)-k];
 					if (cap.perms & CAP_READ != 0){
 						stdout.print("r", .{}) catch unreachable;
@@ -1015,18 +1029,24 @@ pub fn Machine(
 					else{
 						stdout.print("-", .{}) catch unreachable;
 					}
+					if (cap.perms & CAP_TRAP != 0){
+						stdout.print("t", .{}) catch unreachable;
+					}
+					else{
+						stdout.print("-", .{}) catch unreachable;
+					}
 					stdout.print(" {x:04} {x:04}\n", .{cap.ptr, cap.len}) catch unreachable;
 				}
 				stdout.print("\x1b[H", .{}) catch unreachable;
 				const rs_rows = @min(32, self.rs[core].cursor);
 				for (0..rs_rows) |k| {
-					stdout.print("                                     ", .{}) catch unreachable;
+					stdout.print("                                    ", .{}) catch unreachable;
 					stdout.print("{x:04}\n", .{self.rs[core].data[(self.rs[core].cursor-1)-k]}) catch unreachable;
 				}
 				stdout.print("\x1b[H", .{}) catch unreachable;
 				const ds_rows = @min(32, self.ds[core].cursor);
 				for (0..ds_rows) |k| {
-					stdout.print("                                ", .{}) catch unreachable;
+					stdout.print("                               ", .{}) catch unreachable;
 					stdout.print("{x:04}\n", .{self.ds[core].data[(self.ds[core].cursor-1)-k]}) catch unreachable;
 				}
 				stdout.print("\x1b[H", .{}) catch unreachable;
@@ -1034,10 +1054,10 @@ pub fn Machine(
 				const ip_offset:u64 = @max(0, ip_signed-32);
 				var k: u64 = ip_offset;
 				while (k < ip_offset+64) {
-					stdout.print("                           ", .{}) catch unreachable;
+					stdout.print("                          ", .{}) catch unreachable;
 					const val = (@as(Word, @intCast(self.mem[k])) << 8) + self.mem[k+1];
 					if (k == self.ip[core]){
-						stdout.print("\x1b[1;42m{x:04}\x1b[0m\n", .{val}) catch unreachable;
+						stdout.print("\x1b[1;44m{x:04}\x1b[0m\n", .{val}) catch unreachable;
 					}
 					else{
 						stdout.print("{x:04}\n", .{val}) catch unreachable;
@@ -1048,6 +1068,7 @@ pub fn Machine(
 				const byte_slice = self.mem[ip_offset..ip_offset+64];
 				const text = disassemble(mem, byte_slice);
 				stdout.print("{s}", .{text}) catch unreachable;
+				mem.free(text);
 				var stdin = std.io.getStdIn().reader();
 				var buffer: [1]u8 = undefined;
 				_ = stdin.read(&buffer) catch unreachable;
