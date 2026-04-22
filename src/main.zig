@@ -994,6 +994,63 @@ pub fn get_contents(mem: *const std.mem.Allocator, filename: []const u8) ![]u8 {
 	return contents;
 }
 
+pub fn disassemble(mem: *const std.mem.Allocator, bytes: []u8) []u8 {
+	var text = Buffer(u8).init(mem.*);
+	var i: u64 = 0;
+	const mask:u8 = (3<<6);
+	while (i < bytes.len){
+		const head = bytes[i];
+		const body = bytes[i+1];
+		switch ((head & mask)>>6){
+			PSH_MASK => {
+				const buffer: []u8 = mem.alloc(u8, 7) catch unreachable;
+				const slice = std.fmt.bufPrint(buffer, "0x{x:04}\n", .{(@as(Word, @intCast(head)) << 8) + body}) catch unreachable;
+				text.appendSlice(slice) catch unreachable;
+			},
+			JMP_MASK => {
+				const buffer: []u8 = mem.alloc(u8, 7) catch unreachable;
+				const slice = std.fmt.bufPrint(buffer, "[{x:04}]\n", .{(@as(Word, @intCast(head & ~mask)) << 8) + body}) catch unreachable;
+				text.appendSlice(slice) catch unreachable;
+			},
+			INTRINSIC_MASK => {
+				switch (body){
+					NOP => {text.appendSlice("nop\n") catch unreachable;},
+					HLT => {text.appendSlice("hlt\n") catch unreachable;},
+					POP_DS => {text.appendSlice("pop\n") catch unreachable;},
+					EQ0 => {text.appendSlice("eq0\n") catch unreachable;},
+					POP_RS => {text.appendSlice("ret\n") catch unreachable;},
+					ADD => {text.appendSlice("add\n") catch unreachable;},
+					MUL => {text.appendSlice("mul\n") catch unreachable;},
+					SUB => {text.appendSlice("sub\n") catch unreachable;},
+					DIV => {text.appendSlice("div\n") catch unreachable;},
+					PTR => {text.appendSlice("ptr\n") catch unreachable;},
+					NIP => {text.appendSlice("nip\n") catch unreachable;},
+					ROT => {text.appendSlice("rot\n") catch unreachable;},
+					DUP => {text.appendSlice("dup\n") catch unreachable;},
+					CUT => {text.appendSlice("cut\n") catch unreachable;},
+					OVR => {text.appendSlice("ovr\n") catch unreachable;},
+					SWP => {text.appendSlice("swp\n") catch unreachable;},
+					STR => {text.appendSlice("str\n") catch unreachable;},
+					QUT => {text.appendSlice("qut\n") catch unreachable;},
+					UNQ => {text.appendSlice("unq\n") catch unreachable;},
+					CAT => {text.appendSlice("cat\n") catch unreachable;},
+					CSH => {text.appendSlice("csh\n") catch unreachable;},
+					COP => {text.appendSlice("cop\n") catch unreachable;},
+					INT => {text.appendSlice("int\n") catch unreachable;},
+					else => {
+						text.appendSlice("???\n") catch unreachable;
+					}
+				}
+			},
+			else => {
+				text.appendSlice("????\n") catch unreachable;
+			}
+		}
+		i += 2;
+	}
+	return text.items;
+}
+
 pub fn main() !void {
 	const heap = std.heap.page_allocator;
 	const main_buffer = heap.alloc(u8, 0x10000) catch unreachable;
@@ -1024,7 +1081,9 @@ pub fn main() !void {
 	for (bytes) |b| {
 		std.debug.print("{x:02} ", .{b});
 	}
-	std.debug.print("\n", .{});
+	std.debug.print("\n\n", .{});
+	const retext = disassemble(&main_mem, bytes);
+	std.debug.print("disassembly:\n{s}\n\n", .{retext});
 	var mach = Machine(
 		2,
 		1,
