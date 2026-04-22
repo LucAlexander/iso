@@ -630,6 +630,7 @@ pub fn Machine(
 		rs: [CORES]Stack,
 		ip: [CORES]Word,
 		dev: [DEVICES][] u8,
+		dev_busy: [DEVICES] bool,
 		hp: Word,
 		hp_start: Word,
 		hp_end: Word,
@@ -644,11 +645,15 @@ pub fn Machine(
 				.rs = undefined,
 				.ip = undefined,
 				.dev = undefined,
+				.dev_busy = undefined,
 				.hp = 0,
 				.hp_start = 0,
 				.hp_end = 0,
 				.running = undefined
 			};
+			for (0..DEVICES) |i| {
+				mach.dev_busy[i] = false;
+			}
 			for (0..size/2) |i| {
 				mach.cap[i] = Cap{
 					.perms=0,
@@ -680,8 +685,35 @@ pub fn Machine(
 				self.cs[core].push(Cap{
 					.perms = CAP_READ | CAP_WRITE | CAP_EXECUTE,
 					.ptr = loc,
-					.len = @truncate(bytes.len)
+					.len = @truncate(self.mem.len)
 				});
+			}
+		}
+
+		pub fn signal(self: *Self, bytes: []u8) void {
+			if (bytes.len > DEVICE_LEN){
+				return;
+			}
+			var offset = self.hp_end;
+			var k: u64 = 0;
+			for (self.dev_busy) |busy| {
+				if (busy){
+					k += 1;
+					offset += DEVICE_LEN;
+					continue;
+				}
+				break;
+			}
+			for (offset..offset+DEVICE_LEN) |i| {
+				self.mem[i] = bytes[i-offset];
+			}
+			for (0..CORES) |i| {
+				if (self.running[i] == false){
+					self.dev_busy[k] = true;
+					self.running[i] = true;
+					self.ip[i] = offset;
+					return;
+				}
 			}
 		}
 
