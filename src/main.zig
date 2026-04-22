@@ -7,6 +7,7 @@ const open_quote = '(';
 const close_quote = ')';
 const open_word = ':';
 const close_word = ';';
+const string_delimiter = '"';
 const iden = 0;
 const number = 1;
 
@@ -35,6 +36,24 @@ pub fn tokenize(mem: *const std.mem.Allocator, text: []const u8) Buffer(Token) {
 					.tag = c,
 					.value = .{
 						.text = text[i..i+1]
+					}
+				}) catch unreachable;
+				i += 1;
+				continue;
+			},
+			string_delimiter => {
+				i += 1;
+				const start = i;
+				while (i < text.len){
+					if (text[i] == string_delimiter){
+						break;
+					}
+					i += 1;
+				}
+				tokens.append(Token{
+					.tag = c,
+					.value = .{
+						.text = text[start..i]
 					}
 				}) catch unreachable;
 				i += 1;
@@ -130,6 +149,17 @@ pub fn parse(mem: *const std.mem.Allocator, tokens: []Token, k: u64, instruction
 	var i = k;
 	while (i < tokens.len){
 		switch (tokens[i].tag){
+			string_delimiter => {
+				var j: u64 = tokens[i].value.text.len;
+				while (j > 0){
+					const c = tokens[i].value.text[j-1];
+					instructions.append(Inst{ .psh_ds=c}) catch unreachable;
+					j -= 1;
+				}
+				instructions.append(Inst{ .psh_ds=@truncate(tokens[i].value.text.len)}) catch unreachable;
+				i += 1;
+				continue;
+			},
 			open_quote => {
 				i += 1;
 				const save = instructions.items.len;
@@ -1199,7 +1229,7 @@ pub fn main() !void {
 	);
 	mach.load_rom(0, bytes);
 	mach.run(0, 0);
-	mach.debugger(&main_mem, 0);
+	//mach.debugger(&main_mem, 0);
 	while (mach.active()) {
 		mach.step();
 	}
@@ -1207,7 +1237,11 @@ pub fn main() !void {
 
 pub fn int_print(ds: *Stack, _: u8, _: u8, _: []u8) void {
 	_ = ds.pop();
-	std.debug.print("{x:04}", .{ds.top()});
+	var len = ds.pop();
+	while (len > 0){
+		std.debug.print("{c}", .{@as(u8, @truncate(ds.pop()))});
+		len -= 1;
+	}
 }
 
 pub fn int_nop(_: *Stack, _:u8, _:u8, _:[]u8) void {
