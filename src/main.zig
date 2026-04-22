@@ -1199,6 +1199,7 @@ pub fn main() !void {
 		std.debug.print("Help Menu\n", .{});
 		std.debug.print("   -h : Show this message\n", .{});
 		std.debug.print("   [filename] : evaluate file\n", .{});
+		std.debug.print("   -g : Debugger\n", .{});
 		return;
 	}
 	const filename = args[1];
@@ -1229,7 +1230,11 @@ pub fn main() !void {
 	);
 	mach.load_rom(0, bytes);
 	mach.run(0, 0);
-	//mach.debugger(&main_mem, 0);
+	if (args.len == 3){
+		if (std.mem.eql(u8, args[2], "-g")){
+			mach.debugger(&main_mem, 0);
+		}
+	}
 	while (mach.active()) {
 		mach.step();
 	}
