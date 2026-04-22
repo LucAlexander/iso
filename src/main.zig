@@ -974,6 +974,55 @@ pub fn Machine(
 			}
 			self.ip[core] += 2;
 		}
+
+		pub fn debugger(self: *Self, core: u8) void {
+			const stdout = std.io.getStdOut().writer();
+			while (self.running[core]){
+				stdout.print("\x1b[2J\x1b[H", .{}) catch unreachable;
+				var i: u64 = 0;
+				outer: for (0..32) |_| {
+					stdout.print("                                                        ", .{}) catch unreachable;
+					for (0..12) |_| {
+						const block = (@as(Word, @intCast(self.mem[i])) << 8) + self.mem[i+1];
+						stdout.print("{x:04} ", .{block}) catch unreachable;
+						i += 2;
+						if (i > self.mem.len-1){
+							break :outer;
+						}
+					}
+					stdout.print("\n", .{}) catch unreachable;
+				}
+				stdout.print("\x1b[H", .{}) catch unreachable;
+				const cs_rows = @min(32, self.cs[core].cursor);
+				for (0..cs_rows) |k| {
+					stdout.print("                                          ", .{}) catch unreachable;
+					const cap = self.cs[core].data[(self.cs[core].cursor-1)-k];
+					if (cap.perms & CAP_READ != 0){
+						stdout.print("r", .{}) catch unreachable;
+					}
+					else{
+						stdout.print("-", .{}) catch unreachable;
+					}
+					if (cap.perms & CAP_WRITE != 0){
+						stdout.print("w", .{}) catch unreachable;
+					}
+					else{
+						stdout.print("-", .{}) catch unreachable;
+					}
+					if (cap.perms & CAP_EXECUTE != 0){
+						stdout.print("x", .{}) catch unreachable;
+					}
+					else{
+						stdout.print("-", .{}) catch unreachable;
+					}
+					stdout.print(" {x:04} {x:04}", .{cap.ptr, cap.len}) catch unreachable;
+				}
+				var stdin = std.io.getStdIn().reader();
+				var buffer: [1]u8 = undefined;
+				_ = stdin.read(&buffer) catch unreachable;
+				self.step_core(core);
+			}
+		}
 	};
 }
 
@@ -1098,6 +1147,7 @@ pub fn main() !void {
 	);
 	mach.load_rom(0, bytes);
 	mach.run(0, 0);
+	mach.debugger(0);
 	while (mach.active()) {
 		mach.step();
 	}
