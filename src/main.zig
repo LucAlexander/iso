@@ -149,7 +149,8 @@ const Inst = union(enum){
 	gt,
 	ge,
 	le,
-	if_
+	if_,
+	mod
 };
 
 const ParseError = error {
@@ -222,6 +223,11 @@ pub fn parse(mem: *const std.mem.Allocator, tokens: []Token, k: u64, instruction
 				return ParseError.UnexpectedToken;
 			},
 			iden => {
+				if (std.mem.eql(u8, tokens[i].value.text, "mod")){
+					instructions.append(Inst{ .mod = undefined }) catch unreachable;
+					i += 1;
+					continue;
+				}
 				if (std.mem.eql(u8, tokens[i].value.text, "if")){
 					instructions.append(Inst{ .if_ = undefined }) catch unreachable;
 					i += 1;
@@ -447,6 +453,7 @@ const LE = 30;
 const GT = 31;
 const GE = 32;
 const IF = 33;
+const MOD = 34;
 
 const PSH_MASK = 0;
 const JMP_MASK = 1;
@@ -613,6 +620,12 @@ pub fn code_gen(mem: *const std.mem.Allocator, instructions: Buffer(Inst)) []u8 
 				bytes[i] = INTRINSIC_MASK << 6;
 				i += 1;
 				bytes[i] = IF;
+				i += 1;
+			},
+			.mod => {
+				bytes[i] = INTRINSIC_MASK << 6;
+				i += 1;
+				bytes[i] = MOD;
 				i += 1;
 			},
 			.halt => {
@@ -1008,6 +1021,12 @@ pub fn Machine(
 						}
 						self.ds[core].push(loc);
 					},
+					MOD => {
+						const a = self.ds[core].pop();
+						const b = self.ds[core].pop();
+						const c = b % a;
+						self.ds[core].push(c);
+					},
 					ADD => {
 						const a = self.ds[core].pop();
 						const b = self.ds[core].pop();
@@ -1402,6 +1421,7 @@ pub fn disassemble(mem: *const std.mem.Allocator, bytes: []u8) []u8 {
 					GE => {text.appendSlice("ge\n") catch unreachable;},
 					IF => {text.appendSlice("if\n") catch unreachable;},
 					POP_RS => {text.appendSlice("ret\n") catch unreachable;},
+					MOD => {text.appendSlice("mod\n") catch unreachable;},
 					ADD => {text.appendSlice("add\n") catch unreachable;},
 					MUL => {text.appendSlice("mul\n") catch unreachable;},
 					SUB => {text.appendSlice("sub\n") catch unreachable;},
