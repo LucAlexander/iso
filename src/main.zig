@@ -1003,7 +1003,7 @@ pub fn Machine(
 							if (loc%2 == 0){
 								const new_ip = (@as(Word, @intCast(self.mem[loc])) << 8) + self.mem[loc + 1];
 								self.rs[core].push(self.ip[core]+2);
-								self.ip[core] = new_ip;
+								self.ip[core] = new_ip & 0x3fff;
 								return;
 							}
 						}
@@ -1326,6 +1326,9 @@ pub fn Machine(
 				const ip_offset:u64 = @max(0, ip_signed-32);
 				var k: u64 = ip_offset;
 				while (k < ip_offset+64) {
+					if (k >= self.mem.len){
+						break;
+					}
 					stdout.print("                          ", .{}) catch unreachable;
 					const val = (@as(Word, @intCast(self.mem[k])) << 8) + self.mem[k+1];
 					if (k == self.ip[core]){
@@ -1337,10 +1340,13 @@ pub fn Machine(
 					k += 2;
 				}
 				stdout.print("\x1b[H", .{}) catch unreachable;
-				const byte_slice = self.mem[ip_offset..ip_offset+64];
-				const text = disassemble(mem, byte_slice);
-				stdout.print("{s}", .{text}) catch unreachable;
-				mem.free(text);
+				const end_offset = @min(ip_offset+64, self.mem.len);
+				if (ip_offset < self.mem.len){
+					const byte_slice = self.mem[ip_offset..end_offset];
+					const text = disassemble(mem, byte_slice);
+					stdout.print("{s}", .{text}) catch unreachable;
+					mem.free(text);
+				}
 				var stdin = std.io.getStdIn().reader();
 				var buffer: [1]u8 = undefined;
 				_ = stdin.read(&buffer) catch unreachable;
