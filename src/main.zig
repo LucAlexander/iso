@@ -1302,6 +1302,12 @@ pub fn disassemble(mem: *const std.mem.Allocator, bytes: []u8) []u8 {
 					CSH => {text.appendSlice("csh\n") catch unreachable;},
 					COP => {text.appendSlice("cop\n") catch unreachable;},
 					INT => {text.appendSlice("int\n") catch unreachable;},
+					CPT => {text.appendSlice("cpt\n") catch unreachable;},
+					CSZ => {text.appendSlice("csz\n") catch unreachable;},
+					CRD => {text.appendSlice("crd\n") catch unreachable;},
+					CWR => {text.appendSlice("cwr\n") catch unreachable;},
+					CEX => {text.appendSlice("cex\n") catch unreachable;},
+					CIN => {text.appendSlice("cin\n") catch unreachable;},
 					else => {
 						text.appendSlice("???\n") catch unreachable;
 					}
