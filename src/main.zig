@@ -133,7 +133,7 @@ const Inst = union(enum){
 	cat,
 	quote,
 	unquote,
-	eq0,
+	eq,
 	halt,
 	interrupt,
 	csh,
@@ -144,7 +144,12 @@ const Inst = union(enum){
 	crd,
 	cwr,
 	cex,
-	cin
+	cin,
+	lt,
+	gt,
+	ge,
+	le,
+	if_
 };
 
 const ParseError = error {
@@ -217,6 +222,31 @@ pub fn parse(mem: *const std.mem.Allocator, tokens: []Token, k: u64, instruction
 				return ParseError.UnexpectedToken;
 			},
 			iden => {
+				if (std.mem.eql(u8, tokens[i].value.text, "if")){
+					instructions.append(Inst{ .if_ = undefined }) catch unreachable;
+					i += 1;
+					continue;
+				}
+				if (std.mem.eql(u8, tokens[i].value.text, "lt")){
+					instructions.append(Inst{ .lt = undefined }) catch unreachable;
+					i += 1;
+					continue;
+				}
+				if (std.mem.eql(u8, tokens[i].value.text, "le")){
+					instructions.append(Inst{ .le = undefined }) catch unreachable;
+					i += 1;
+					continue;
+				}
+				if (std.mem.eql(u8, tokens[i].value.text, "gt")){
+					instructions.append(Inst{ .gt = undefined }) catch unreachable;
+					i += 1;
+					continue;
+				}
+				if (std.mem.eql(u8, tokens[i].value.text, "ge")){
+					instructions.append(Inst{ .ge = undefined }) catch unreachable;
+					i += 1;
+					continue;
+				}
 				if (std.mem.eql(u8, tokens[i].value.text, "cat")){
 					instructions.append(Inst{ .cat = undefined }) catch unreachable;
 					i += 1;
@@ -292,8 +322,8 @@ pub fn parse(mem: *const std.mem.Allocator, tokens: []Token, k: u64, instruction
 					i += 1;
 					continue;
 				}
-				if (std.mem.eql(u8, tokens[i].value.text, "eq0")){
-					instructions.append(Inst{ .eq0 = undefined }) catch unreachable;
+				if (std.mem.eql(u8, tokens[i].value.text, "eq")){
+					instructions.append(Inst{ .eq = undefined }) catch unreachable;
 					i += 1;
 					continue;
 				}
@@ -386,7 +416,7 @@ const OPCODE = u8;
 const NOP = 0;
 const HLT = 1;
 const POP_DS = 2;
-const EQ0 = 3;
+const EQ = 3;
 const POP_RS = 4;
 const ADD = 5;
 const MUL = 6;
@@ -412,6 +442,11 @@ const CRD = 25;
 const CWR = 26;
 const CEX = 27;
 const CIN = 28;
+const LT = 29;
+const LE = 30;
+const GT = 31;
+const GE = 32;
+const IF = 33;
 
 const PSH_MASK = 0;
 const JMP_MASK = 1;
@@ -544,10 +579,40 @@ pub fn code_gen(mem: *const std.mem.Allocator, instructions: Buffer(Inst)) []u8 
 				bytes[i] = UNQ;
 				i += 1;
 			},
-			.eq0 => {
+			.eq => {
 				bytes[i] = INTRINSIC_MASK << 6;
 				i += 1;
-				bytes[i] = EQ0;
+				bytes[i] = EQ;
+				i += 1;
+			},
+			.lt => {
+				bytes[i] = INTRINSIC_MASK << 6;
+				i += 1;
+				bytes[i] = LT;
+				i += 1;
+			},
+			.le => {
+				bytes[i] = INTRINSIC_MASK << 6;
+				i += 1;
+				bytes[i] = LE;
+				i += 1;
+			},
+			.gt => {
+				bytes[i] = INTRINSIC_MASK << 6;
+				i += 1;
+				bytes[i] = GT;
+				i += 1;
+			},
+			.ge => {
+				bytes[i] = INTRINSIC_MASK << 6;
+				i += 1;
+				bytes[i] = GE;
+				i += 1;
+			},
+			.if_ => {
+				bytes[i] = INTRINSIC_MASK << 6;
+				i += 1;
+				bytes[i] = IF;
 				i += 1;
 			},
 			.halt => {
@@ -1000,14 +1065,7 @@ pub fn Machine(
 					COP => {
 						const cap = self.cs[core].pop();
 						const ptr = self.ds[core].pop();
-						const current = self.cs[core].top();
-						if (current.allow_write(ptr, self.hp_start, self.hp_end)){
-							self.cap[ptr] = cap;
-							self.ip[core] += 2; 
-							return;
-						}
-						self.cs[core].push(cap);
-						self.ds[core].push(ptr);
+						self.cap[ptr] = cap;
 					},
 					CAT => {
 						const right = self.ds[core].pop();
@@ -1040,15 +1098,65 @@ pub fn Machine(
 						self.hp += 1;
 						self.ds[core].push(save);
 					},
-					EQ0 => {
-						const val = self.ds[core].pop();
-						if (val == 0){
-							_ = self.ds[core].pop();
+					EQ => {
+						const a = self.ds[core].pop();
+						const b = self.ds[core].pop();
+						if (a == b){
+							self.ds[core].push(1);
 						}
 						else{
+							self.ds[core].push(0);
+						}
+					},
+					LT => {
+						const a = self.ds[core].pop();
+						const b = self.ds[core].pop();
+						if (a > b){
+							self.ds[core].push(1);
+						}
+						else{
+							self.ds[core].push(0);
+						}
+					},
+					LE => {
+						const a = self.ds[core].pop();
+						const b = self.ds[core].pop();
+						if (a >= b){
+							self.ds[core].push(1);
+						}
+						else{
+							self.ds[core].push(0);
+						}
+					},
+					GT => {
+						const a = self.ds[core].pop();
+						const b = self.ds[core].pop();
+						if (a < b){
+							self.ds[core].push(1);
+						}
+						else{
+							self.ds[core].push(0);
+						}
+					},
+					GE => {
+						const a = self.ds[core].pop();
+						const b = self.ds[core].pop();
+						if (a <= b){
+							self.ds[core].push(1);
+						}
+						else{
+							self.ds[core].push(0);
+						}
+					},
+					IF => {
+						const a = self.ds[core].pop();
+						if (a == 0){
 							const target = self.ds[core].pop();
 							_ = self.ds[core].pop();
 							self.ds[core].push(target);
+						}
+						else{
+							_ = self.ds[core].pop();
 						}
 					},
 					INT => {
@@ -1282,7 +1390,11 @@ pub fn disassemble(mem: *const std.mem.Allocator, bytes: []u8) []u8 {
 					NOP => {text.appendSlice("nop\n") catch unreachable;},
 					HLT => {text.appendSlice("hlt\n") catch unreachable;},
 					POP_DS => {text.appendSlice("pop\n") catch unreachable;},
-					EQ0 => {text.appendSlice("eq0\n") catch unreachable;},
+					EQ => {text.appendSlice("eq\n") catch unreachable;},
+					LT => {text.appendSlice("lt\n") catch unreachable;},
+					LE => {text.appendSlice("le\n") catch unreachable;},
+					GT => {text.appendSlice("gt\n") catch unreachable;},
+					GE => {text.appendSlice("ge\n") catch unreachable;},
 					POP_RS => {text.appendSlice("ret\n") catch unreachable;},
 					ADD => {text.appendSlice("add\n") catch unreachable;},
 					MUL => {text.appendSlice("mul\n") catch unreachable;},
