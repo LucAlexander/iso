@@ -120,6 +120,7 @@ const Inst = union(enum){
 	pop_rs,
 	write_ds,
 	jmp: Word,
+	jmp_nc: Word,
 	nip,
 	rot,
 	dup,
@@ -175,11 +176,11 @@ pub fn parse(mem: *const std.mem.Allocator, tokens: []Token, k: u64, instruction
 			open_quote => {
 				i += 1;
 				const save = instructions.items.len;
-				instructions.append(Inst{.jmp=0}) catch unreachable;
+				instructions.append(Inst{.jmp_nc=0}) catch unreachable;
 				const value:Word = @truncate(instructions.items.len*2);
 				i = try parse(mem, tokens, i, instructions, close_quote, defs, def_backlog);
 				instructions.append(Inst{ .pop_rs=undefined}) catch unreachable;
-				instructions.items[save].jmp = @intCast(instructions.items.len*2);
+				instructions.items[save].jmp_nc = @intCast(instructions.items.len*2);
 				instructions.append(Inst{ .psh_ds=value}) catch unreachable;
 				i += 1;
 				continue;
@@ -200,12 +201,12 @@ pub fn parse(mem: *const std.mem.Allocator, tokens: []Token, k: u64, instruction
 				}
 				i += 1;
 				const save = instructions.items.len;
-				instructions.append(Inst{.jmp=0}) catch unreachable;
+				instructions.append(Inst{.jmp_nc=0}) catch unreachable;
 				const loc:Word = @intCast(instructions.items.len*2);
 				i = try parse(mem, tokens, i, instructions, close_word, defs, def_backlog);
 				instructions.append(Inst{ .pop_rs=undefined}) catch unreachable;
 				defs.put(name.value.text, loc) catch unreachable;
-				instructions.items[save].jmp= @intCast(instructions.items.len*2);
+				instructions.items[save].jmp_nc = @intCast(instructions.items.len*2);
 				if (def_backlog.get(name.value.text)) |list| {
 					for (list.items) |index| {
 						instructions.items[index].jmp = loc;
@@ -458,6 +459,7 @@ const MOD = 34;
 const PSH_MASK = 0;
 const JMP_MASK = 1;
 const INTRINSIC_MASK = 2;
+const JMP_NC_MASK = 3;
 
 pub fn code_gen(mem: *const std.mem.Allocator, instructions: Buffer(Inst)) []u8 {
 	var bytes = mem.alloc(u8, instructions.items.len*2) catch unreachable;
@@ -488,6 +490,12 @@ pub fn code_gen(mem: *const std.mem.Allocator, instructions: Buffer(Inst)) []u8 
 				bytes[i] = INTRINSIC_MASK << 6;
 				i += 1;
 				bytes[i] = STR;
+				i += 1;
+			},
+			.jmp_nc => {
+				bytes[i] = (@as(u8, @truncate((inst.jmp_nc & 0xFF00) >> 8)) & 0b00111111) | (JMP_NC_MASK << 6);
+				i += 1;
+				bytes[i] = @truncate(inst.jmp_nc & 0xFF);
 				i += 1;
 			},
 			.jmp => {
@@ -1276,10 +1284,18 @@ pub fn Machine(
 				}
 				_ = self.rs[core].pop();
 			}
+			else if (mask == JMP_NC_MASK){
+				const cap = self.cs[core].top();
+				const data = ((@as(Word, @intCast(self.mem[self.ip[core]])) << 8) + self.mem[self.ip[core] + 1]) & ~long_mask_mask;
+				if (data%2==0 and cap.allow_execute(data, self.hp_start, self.hp_end)){
+					self.ip[core] = data;
+					return;
+				}
+			}
 			self.ip[core] += 2;
 		}
 
-		pub fn debugger(self: *Self, mem: *const std.mem.Allocator, core: u8) void {
+		pub fn debugger(self: *Self, mem: *const std.mem.Allocator, fixed: *std.heap.FixedBufferAllocator, core: u8) void {
 			const stdout = std.io.getStdOut().writer();
 			while (self.running[core]){
 				stdout.print("\x1b[2J\x1b[H", .{}) catch unreachable;
@@ -1363,7 +1379,7 @@ pub fn Machine(
 					const byte_slice = self.mem[ip_offset..end_offset];
 					const text = disassemble(mem, byte_slice);
 					stdout.print("{s}", .{text}) catch unreachable;
-					mem.free(text);
+					fixed.reset();
 				}
 				var stdin = std.io.getStdIn().reader();
 				var buffer: [1]u8 = undefined;
@@ -1467,7 +1483,7 @@ pub fn main() !void {
 	var main_mem_fixed = std.heap.FixedBufferAllocator.init(main_buffer);
 	var temp_mem_fixed = std.heap.FixedBufferAllocator.init(temp_buffer);
 	var main_mem = main_mem_fixed.allocator();
-	_ = temp_mem_fixed.allocator();
+	var temp_mem = temp_mem_fixed.allocator();
 	const args = try std.process.argsAlloc(main_mem);
 	if (args.len == 1){
 		std.debug.print("-h for help\n", .{});
@@ -1510,7 +1526,7 @@ pub fn main() !void {
 	mach.run(0, 0);
 	if (args.len == 3){
 		if (std.mem.eql(u8, args[2], "-g")){
-			mach.debugger(&main_mem, 0);
+			mach.debugger(&temp_mem, &temp_mem_fixed, 0);
 		}
 	}
 	while (mach.active()) {
