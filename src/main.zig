@@ -998,12 +998,11 @@ pub fn Machine(
 						self.ds[core].push(b);
 					},
 					UNQ => {
-						const loc = self.ds[core].pop();
+						const loc = self.ds[core].pop() & 0x3fff;
 						if (loc < self.mem.len){
 							if (loc%2 == 0){
-								const new_ip = (@as(Word, @intCast(self.mem[loc])) << 8) + self.mem[loc + 1];
 								self.rs[core].push(self.ip[core]+2);
-								self.ip[core] = new_ip & 0x3fff;
+								self.ip[core] = loc;
 								return;
 							}
 						}
@@ -1401,6 +1400,7 @@ pub fn disassemble(mem: *const std.mem.Allocator, bytes: []u8) []u8 {
 					LE => {text.appendSlice("le\n") catch unreachable;},
 					GT => {text.appendSlice("gt\n") catch unreachable;},
 					GE => {text.appendSlice("ge\n") catch unreachable;},
+					IF => {text.appendSlice("if\n") catch unreachable;},
 					POP_RS => {text.appendSlice("ret\n") catch unreachable;},
 					ADD => {text.appendSlice("add\n") catch unreachable;},
 					MUL => {text.appendSlice("mul\n") catch unreachable;},
