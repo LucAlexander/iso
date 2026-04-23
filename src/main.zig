@@ -140,6 +140,7 @@ const Inst = union(enum){
 	csh,
 	cop,
 	ptr,
+	ref,
 	cpt,
 	csz,
 	crd,
@@ -354,6 +355,11 @@ pub fn parse(mem: *const std.mem.Allocator, tokens: []Token, k: u64, instruction
 					i += 1;
 					continue;
 				}
+				if (std.mem.eql(u8, tokens[i].value.text, "ref")){
+					instructions.append(Inst{ .ref = undefined }) catch unreachable;
+					i += 1;
+					continue;
+				}
 				if (std.mem.eql(u8, tokens[i].value.text, "ptr")){
 					instructions.append(Inst{ .ptr = undefined }) catch unreachable;
 					i += 1;
@@ -455,6 +461,7 @@ const GT = 31;
 const GE = 32;
 const IF = 33;
 const MOD = 34;
+const REF = 35;
 
 const PSH_MASK = 0;
 const JMP_MASK = 1;
@@ -646,6 +653,12 @@ pub fn code_gen(mem: *const std.mem.Allocator, instructions: Buffer(Inst)) []u8 
 				bytes[i] = INTRINSIC_MASK << 6;
 				i += 1;
 				bytes[i] = INT;
+				i += 1;
+			},
+			.ref => {
+				bytes[i] = INTRINSIC_MASK << 6;
+				i += 1;
+				bytes[i] = REF;
 				i += 1;
 			},
 			.ptr => {
@@ -987,10 +1000,9 @@ pub fn Machine(
 					OVR => {
 						const a = self.ds[core].pop();
 						const b = self.ds[core].pop();
-						const c = self.ds[core].pop();
 						self.ds[core].push(b);
 						self.ds[core].push(a);
-						self.ds[core].push(c);
+						self.ds[core].push(b);
 					},
 					DUP => {
 						const a = self.ds[core].pop();
@@ -1210,9 +1222,21 @@ pub fn Machine(
 					HLT => {
 						self.running[core] = false;
 					},
-					PTR => {
+					REF => {
+						const cap = self.cs[core].top();
 						const loc = self.ds[core].pop();
-						if (loc < self.mem.len){
+						if (loc < self.mem.len and cap.allow_read(loc, self.hp_start, self.hp_end)){
+							const data = ((@as(Word, @intCast(self.mem[loc])) << 8) + self.mem[loc + 1]);
+							self.ds[core].push(data);
+							self.ip[core] += 2;
+							return;
+						}
+						self.ds[core].push(loc);
+					},
+					PTR => {
+						const cap = self.cs[core].top();
+						const loc = self.ds[core].pop();
+						if (loc < self.mem.len and cap.allow_read(loc, self.hp_start, self.hp_end)){
 							const data = ((@as(Word, @intCast(self.mem[loc])) << 8) + self.mem[loc + 1]) & ~long_mask_mask;
 							self.ds[core].push(data);
 							self.ip[core] += 2;
@@ -1425,6 +1449,11 @@ pub fn disassemble(mem: *const std.mem.Allocator, bytes: []u8) []u8 {
 				const slice = std.fmt.bufPrint(buffer, "[{x:04}]\n", .{(@as(Word, @intCast(head & ~mask)) << 8) + body}) catch unreachable;
 				text.appendSlice(slice) catch unreachable;
 			},
+			JMP_NC_MASK => {
+				const buffer: []u8 = mem.alloc(u8, 7) catch unreachable;
+				const slice = std.fmt.bufPrint(buffer, "<{x:04}>\n", .{(@as(Word, @intCast(head & ~mask)) << 8) + body}) catch unreachable;
+				text.appendSlice(slice) catch unreachable;
+			},
 			INTRINSIC_MASK => {
 				switch (body){
 					NOP => {text.appendSlice("nop\n") catch unreachable;},
@@ -1443,6 +1472,7 @@ pub fn disassemble(mem: *const std.mem.Allocator, bytes: []u8) []u8 {
 					SUB => {text.appendSlice("sub\n") catch unreachable;},
 					DIV => {text.appendSlice("div\n") catch unreachable;},
 					PTR => {text.appendSlice("ptr\n") catch unreachable;},
+					REF => {text.appendSlice("ref\n") catch unreachable;},
 					NIP => {text.appendSlice("nip\n") catch unreachable;},
 					ROT => {text.appendSlice("rot\n") catch unreachable;},
 					DUP => {text.appendSlice("dup\n") catch unreachable;},
