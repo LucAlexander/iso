@@ -139,6 +139,12 @@ const Inst = union(enum){
 	csh,
 	cop,
 	ptr,
+	cpt,
+	csz,
+	crd,
+	cwr,
+	cex,
+	cin
 };
 
 const ParseError = error {
@@ -316,6 +322,36 @@ pub fn parse(mem: *const std.mem.Allocator, tokens: []Token, k: u64, instruction
 					i += 1;
 					continue;
 				}
+				if (std.mem.eql(u8, tokens[i].value.text, "cpt")){
+					instructions.append(Inst{ .cpt = undefined }) catch unreachable;
+					i += 1;
+					continue;
+				}
+				if (std.mem.eql(u8, tokens[i].value.text, "csz")){
+					instructions.append(Inst{ .csz = undefined }) catch unreachable;
+					i += 1;
+					continue;
+				}
+				if (std.mem.eql(u8, tokens[i].value.text, "crd")){
+					instructions.append(Inst{ .crd = undefined }) catch unreachable;
+					i += 1;
+					continue;
+				}
+				if (std.mem.eql(u8, tokens[i].value.text, "cwr")){
+					instructions.append(Inst{ .cwr = undefined }) catch unreachable;
+					i += 1;
+					continue;
+				}
+				if (std.mem.eql(u8, tokens[i].value.text, "cex")){
+					instructions.append(Inst{ .cex = undefined }) catch unreachable;
+					i += 1;
+					continue;
+				}
+				if (std.mem.eql(u8, tokens[i].value.text, "cin")){
+					instructions.append(Inst{ .cin = undefined }) catch unreachable;
+					i += 1;
+					continue;
+				}
 				if (defs.get(tokens[i].value.text)) |address| {
 					instructions.append(Inst{ .jmp=address, }) catch unreachable;
 					i += 1;
@@ -370,6 +406,12 @@ const CAT = 19;
 const CSH = 20;
 const COP = 21;
 const INT = 22;
+const CPT = 23;
+const CSZ = 24;
+const CRD = 25;
+const CWR = 26;
+const CEX = 27;
+const CIN = 28;
 
 const PSH_MASK = 0;
 const JMP_MASK = 1;
@@ -526,6 +568,42 @@ pub fn code_gen(mem: *const std.mem.Allocator, instructions: Buffer(Inst)) []u8 
 				bytes[i] = PTR;
 				i += 1;
 			},
+			.cpt => {
+				bytes[i] = INTRINSIC_MASK << 6;
+				i += 1;
+				bytes[i] = CPT;
+				i += 1;
+			},
+			.csz => {
+				bytes[i] = INTRINSIC_MASK << 6;
+				i += 1;
+				bytes[i] = CSZ;
+				i += 1;
+			},
+			.crd => {
+				bytes[i] = INTRINSIC_MASK << 6;
+				i += 1;
+				bytes[i] = CRD;
+				i += 1;
+			},
+			.cwr => {
+				bytes[i] = INTRINSIC_MASK << 6;
+				i += 1;
+				bytes[i] = CWR;
+				i += 1;
+			},
+			.cex => {
+				bytes[i] = INTRINSIC_MASK << 6;
+				i += 1;
+				bytes[i] = CEX;
+				i += 1;
+			},
+			.cin => {
+				bytes[i] = INTRINSIC_MASK << 6;
+				i += 1;
+				bytes[i] = CIN;
+				i += 1;
+			}
 		}
 		k += 1;
 	}
@@ -907,17 +985,29 @@ pub fn Machine(
 						self.ds[core].push(save);
 					},
 					CSH => {
+						const cap = self.cs[core].top();
 						const address = self.ds[core].pop();
-						if (address/2 < self.cap[core].len){
-							const data = self.cap[address/2];
-							self.cs[core].push(data);
-							self.ip[core] += 2;
-							return;
+						if (cap.allow_read(address, self.hp_start, self.hp_end)){
+							if (address/2 < self.cap[core].len){
+								const data = self.cap[address/2];
+								self.cs[core].push(data);
+								self.ip[core] += 2;
+								return;
+							}
 						}
 						self.ds[core].push(address);
 					},
 					COP => {
-						_ = self.cs[core].pop();
+						const cap = self.cs[core].pop();
+						const ptr = self.ds[core].pop();
+						const current = self.cs[core].top();
+						if (current.allow_write(ptr, self.hp_start, self.hp_end)){
+							self.cap[ptr] = cap;
+							self.ip[core] += 2; 
+							return;
+						}
+						self.cs[core].push(cap);
+						self.ds[core].push(ptr);
 					},
 					CAT => {
 						const right = self.ds[core].pop();
@@ -995,6 +1085,50 @@ pub fn Machine(
 							return;
 						}
 						self.ds[core].push(loc);
+					},
+					CPT => {
+						const cap = self.cs[core].top();
+						self.ds[core].push(cap.ptr);
+					},
+					CSZ => {
+						const cap = self.cs[core].top();
+						self.ds[core].push(cap.len);
+					},
+					CRD => {
+						const cap = self.cs[core].top();
+						if (cap.perms & CAP_READ != 0){
+							self.ds[core].push(1);
+						}
+						else{
+							self.ds[core].push(0);
+						}
+					},
+					CWR => {
+						const cap = self.cs[core].top();
+						if (cap.perms & CAP_WRITE != 0){
+							self.ds[core].push(1);
+						}
+						else{
+							self.ds[core].push(0);
+						}
+					},
+					CEX => {
+						const cap = self.cs[core].top();
+						if (cap.perms & CAP_EXECUTE != 0){
+							self.ds[core].push(1);
+						}
+						else{
+							self.ds[core].push(0);
+						}
+					},
+					CIN => {
+						const cap = self.cs[core].top();
+						if (cap.perms & CAP_TRAP != 0){
+							self.ds[core].push(1);
+						}
+						else{
+							self.ds[core].push(0);
+						}
 					},
 					else => { }
 				}
