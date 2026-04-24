@@ -794,7 +794,7 @@ const Cap = struct {
 			return false;
 		}
 		if (self.perms & CAP_READ != 0) {
-			return address > self.ptr and address < self.ptr + self.len;
+			return address >= self.ptr and address < self.ptr + self.len;
 		}
 		return false;
 	}
@@ -804,7 +804,7 @@ const Cap = struct {
 			return false;
 		}
 		if (self.perms & CAP_WRITE != 0) {
-			return address > self.ptr and address < self.ptr + self.len;
+			return address >= self.ptr and address < self.ptr + self.len;
 		}
 		return false;
 	}
@@ -814,7 +814,7 @@ const Cap = struct {
 			return false;
 		}
 		if (self.perms & CAP_EXECUTE != 0) {
-			return address > self.ptr and address < self.ptr + self.len;
+			return address >= self.ptr and address < self.ptr + self.len;
 		}
 		return false;
 	}
@@ -824,7 +824,7 @@ const Cap = struct {
 			return false;
 		}
 		if (self.perms & CAP_TRAP != 0) {
-			return address > self.ptr and address < self.ptr + self.len;
+			return address >= self.ptr and address < self.ptr + self.len;
 		}
 		return false;
 	}
