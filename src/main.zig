@@ -791,7 +791,7 @@ const Cap = struct {
 
 	pub fn allow_read(self: *const Cap, address: Word, hp_start: Word, hp_end: Word) bool {
 		if (address > hp_start and address < hp_end){
-			return false;
+			return true;
 		}
 		if (self.perms & CAP_READ != 0) {
 			return address >= self.ptr and address < self.ptr + self.len;
@@ -1113,7 +1113,7 @@ pub fn Machine(
 						}
 						const save = self.hp;
 						self.mem[self.hp] = @truncate(left>>8);
-						self.mem[self.hp] &= (PSH_MASK << 6);
+						self.mem[self.hp] |= (PSH_MASK << 6);
 						self.hp += 1;
 						self.mem[self.hp] = @truncate(left & 0xff);
 						self.hp += 1;
@@ -1122,7 +1122,7 @@ pub fn Machine(
 						self.mem[self.hp] = UNQ;
 						self.hp += 1;
 						self.mem[self.hp] = @truncate(right>>8);
-						self.mem[self.hp] &= (PSH_MASK << 6);
+						self.mem[self.hp] |= (PSH_MASK << 6);
 						self.hp += 1;
 						self.mem[self.hp] = @truncate(right & 0xff);
 						self.hp += 1;
