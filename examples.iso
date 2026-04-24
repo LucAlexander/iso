@@ -1,0 +1,125 @@
+main hlt
+:umax 0x3fff;
+
+:print 0 int; - string --
+:nl 10 1 0 int;
+:println print nl; - string --
+
+:set ptr str; - int quote --
+:inc dup unq 1 add swp ptr str; 
+
+:iff () swp if unq; - quote --
+
+:birot rot rot;
+
+:shift_right
+	2 div
+	2 div
+	2 div
+	2 div
+;
+
+:itos_helper
+	dup
+	()
+	(
+		dup
+		0x10 mod
+		dup
+		(48 add) (55 add)
+			birot 0xa lt if unq
+		swp
+		shift_right
+		itos
+		1 add
+	) birot 0 eq if unq
+;
+
+:itos - machine_word -- string
+	dup
+	(48 swp 1 add) (itos_helper)
+		birot 0 eq if unq
+;
+
+:scan
+	:i 0;
+	:loop 
+		i ref itos println
+		(i 2 add (i) set loop) (0 (i) set)
+			i 0xf lt if unq
+	;
+	loop
+;
+
+:overwrite - source dest --
+	ptr
+	dup birot
+	dup rot
+	:overwriteloop
+		ref swp str
+		2 add
+		swp 2 add
+		swp
+		ovr ovr
+		dup
+		(itos_helper) (overwriteloop)
+			birot ref 0 eq if unq
+	;
+	overwriteloop
+;
+
+:repeat - quote times --
+	:i 0;
+	ovr ((i) inc repeat) cat ovr
+	(0 (i) set) swp i gt if unq
+;
+
+:for - quote times --
+	:i 0;
+	ovr ((i) inc for) cat
+	(i) swp cat ovr
+	(0 (i) set) swp i gt if unq
+;
+
+:easyscan
+	(
+		2 mul
+		ref
+		itos println
+	) 0x5 for
+;
+
+:alloc5 () () cat; - len -- ptr
+
+:buffer_helper
+	dup
+	(alloc5 pop pop)
+	(
+		alloc5 pop
+		5 sub
+		buffer_helper
+	) birot 5 lt if unq
+;
+
+:buffer - len -- ptr len
+	dup
+	dup
+	(alloc5)
+	(
+		alloc5 swp
+		5 sub
+		buffer_helper
+	) birot 5 lt if unq
+	swp
+;
+
+:len nip; - ptr len -- len
+
+:main
+	11 buffer
+	len
+	easyscan
+	(48 add 1 println) 5 for
+	("cat" println) 5 repeat
+	("hello world" println hlt 0) (itos_helper) overwrite
+;
