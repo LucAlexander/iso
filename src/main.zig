@@ -27,6 +27,16 @@ pub fn tokenize(mem: *const std.mem.Allocator, text: []const u8) Buffer(Token) {
 	while (i < text.len){
 		const c = text[i];
 		switch(c) {
+			'-' => {
+				while (i < text.len){
+					if (text[i] == '\n'){
+						i += 1;
+						break;
+					}
+					i += 1;
+				}
+				continue;
+			},
 			' ', '\t', '\n', '\r' => {
 				i += 1;
 				continue;
