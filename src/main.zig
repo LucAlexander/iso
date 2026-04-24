@@ -790,7 +790,7 @@ const Cap = struct {
 	len: Word,
 
 	pub fn allow_read(self: *const Cap, address: Word, hp_start: Word, hp_end: Word) bool {
-		if (address > hp_start and address < hp_end){
+		if (address >= hp_start and address < hp_end){
 			return true;
 		}
 		if (self.perms & CAP_READ != 0) {
@@ -800,7 +800,7 @@ const Cap = struct {
 	}
 
 	pub fn allow_write(self: *const Cap, address: Word, hp_start: Word, hp_end: Word) bool {
-		if (address > hp_start and address < hp_end){
+		if (address >= hp_start and address < hp_end){
 			return false;
 		}
 		if (self.perms & CAP_WRITE != 0) {
@@ -810,7 +810,7 @@ const Cap = struct {
 	}
 
 	pub fn allow_execute(self: *const Cap, address: Word, hp_start: Word, hp_end: Word) bool {
-		if (address > hp_start and address < hp_end){
+		if (address >= hp_start and address < hp_end){
 			return false;
 		}
 		if (self.perms & CAP_EXECUTE != 0) {
@@ -820,7 +820,7 @@ const Cap = struct {
 	}
 
 	pub fn allow_trap(self: *const Cap, address: Word, hp_start: Word, hp_end: Word) bool {
-		if (address > hp_start and address < hp_end){
+		if (address >= hp_start and address < hp_end){
 			return false;
 		}
 		if (self.perms & CAP_TRAP != 0) {
