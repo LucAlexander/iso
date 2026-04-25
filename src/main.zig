@@ -157,6 +157,7 @@ const Inst = union(enum){
 	cwr,
 	cex,
 	cin,
+	ccp,
 	lt,
 	gt,
 	ge,
@@ -400,6 +401,11 @@ pub fn parse(mem: *const std.mem.Allocator, tokens: []Token, k: u64, instruction
 					i += 1;
 					continue;
 				}
+				if (std.mem.eql(u8, tokens[i].value.text, "ccp")){
+					instructions.append(Inst{ .ccp = undefined }) catch unreachable;
+					i += 1;
+					continue;
+				}
 				if (std.mem.eql(u8, tokens[i].value.text, "cin")){
 					instructions.append(Inst{ .cin = undefined }) catch unreachable;
 					i += 1;
@@ -472,6 +478,7 @@ const GE = 32;
 const IF = 33;
 const MOD = 34;
 const REF = 35;
+const CCP = 36;
 
 const PSH_MASK = 0;
 const JMP_MASK = 1;
@@ -585,6 +592,12 @@ pub fn code_gen(mem: *const std.mem.Allocator, instructions: Buffer(Inst)) []u8 
 				bytes[i] = INTRINSIC_MASK << 6;
 				i += 1;
 				bytes[i] = CAT;
+				i += 1;
+			},
+			.ccp => {
+				bytes[i] = INTRINSIC_MASK << 6;
+				i += 1;
+				bytes[i] = CCP;
 				i += 1;
 			},
 			.csh => {
@@ -793,6 +806,7 @@ const CAP_READ = 1;
 const CAP_WRITE = 2;
 const CAP_EXECUTE = 4;
 const CAP_TRAP = 5;
+const CAP_CAP = 6;
 
 const Cap = struct {
 	perms: u8,
@@ -834,6 +848,16 @@ const Cap = struct {
 			return false;
 		}
 		if (self.perms & CAP_TRAP != 0) {
+			return address >= self.ptr and address < self.ptr + self.len;
+		}
+		return false;
+	}
+
+	pub fn allow_cap(self: *const Cap, address: Word, hp_start: Word, hp_end: Word) bool {
+		if (address >= hp_start and address < hp_end){
+			return false;
+		}
+		if (self.perms & CAP_CAP != 0) {
 			return address >= self.ptr and address < self.ptr + self.len;
 		}
 		return false;
@@ -1115,9 +1139,12 @@ pub fn Machine(
 						self.ds[core].push(address);
 					},
 					COP => {
-						const cap = self.cs[core].pop();
-						const ptr = self.ds[core].pop();
-						self.cap[ptr] = cap;
+						const current = self.cs[core].top();
+						if (current.allow_cap(self.ip[core], self.hp_start, self.hp_end)){
+							const cap = self.cs[core].pop();
+							const ptr = self.ds[core].pop();
+							self.cap[ptr] = cap;
+						}
 					},
 					CAT => {
 						const right = self.ds[core].pop();
@@ -1296,6 +1323,15 @@ pub fn Machine(
 					CIN => {
 						const cap = self.cs[core].top();
 						if (cap.perms & CAP_TRAP != 0){
+							self.ds[core].push(1);
+						}
+						else{
+							self.ds[core].push(0);
+						}
+					},
+					CCP => {
+						const cap = self.cs[core].top();
+						if (cap.perms & CAP_CAP != 0){
 							self.ds[core].push(1);
 						}
 						else{
@@ -1506,6 +1542,7 @@ pub fn disassemble(mem: *const std.mem.Allocator, bytes: []u8) []u8 {
 					CWR => {text.appendSlice("cwr\n") catch unreachable;},
 					CEX => {text.appendSlice("cex\n") catch unreachable;},
 					CIN => {text.appendSlice("cin\n") catch unreachable;},
+					CCP => {text.appendSlice("ccp\n") catch unreachable;},
 					else => {
 						text.appendSlice("???\n") catch unreachable;
 					}
