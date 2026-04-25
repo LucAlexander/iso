@@ -939,7 +939,7 @@ pub fn Machine(
 			self.hp_end = @as(Word, @truncate(self.mem.len))-offset;
 			for (0..CORES) |core| {
 				self.cs[core].push(Cap{
-					.perms = CAP_READ | CAP_WRITE | CAP_EXECUTE | CAP_TRAP,
+					.perms = CAP_READ | CAP_WRITE | CAP_EXECUTE | CAP_TRAP | CAP_CAP,
 					.ptr = loc,
 					.len = @truncate(self.mem.len)
 				});
@@ -1411,6 +1411,12 @@ pub fn Machine(
 					}
 					if (cap.perms & CAP_TRAP != 0){
 						stdout.print("t", .{}) catch unreachable;
+					}
+					else{
+						stdout.print("-", .{}) catch unreachable;
+					}
+					if (cap.perms & CAP_CAP != 0){
+						stdout.print("c", .{}) catch unreachable;
 					}
 					else{
 						stdout.print("-", .{}) catch unreachable;
