@@ -840,14 +840,16 @@ const Cap = struct {
 	}
 };
 
+const Interrupt = fn(*Stack, u8, u8, []u8, *anyopaque) void;
+
 pub fn Machine(
 	comptime CORES: u8,
 	comptime DEVICES: u8,
 	comptime DEVICE_LEN: u8,
-	comptime int0: fn(*Stack, u8, u8, []u8) void ,
-	comptime int1: fn(*Stack, u8, u8, []u8) void ,
-	comptime int2: fn(*Stack, u8, u8, []u8) void ,
-	comptime int3: fn(*Stack, u8, u8, []u8) void 
+	comptime int0: Interrupt,
+	comptime int1: Interrupt,
+	comptime int2: Interrupt,
+	comptime int3: Interrupt
 ) type {
 	return struct {
 		const Self = @This();
@@ -863,8 +865,9 @@ pub fn Machine(
 		hp_start: Word,
 		hp_end: Word,
 		running: [CORES]bool,
+		host: *anyopaque,
 
-		pub fn init(mem: *const std.mem.Allocator, size: Word, ss: Word, css: Word) Self {
+		pub fn init(mem: *const std.mem.Allocator, size: Word, ss: Word, css: Word, host: *anyopaque) Self {
 			var mach = Self{
 				.mem = mem.alloc(u8, size) catch unreachable,
 				.cap = mem.alloc(Cap, size/2) catch unreachable,
@@ -877,7 +880,8 @@ pub fn Machine(
 				.hp = 0,
 				.hp_start = 0,
 				.hp_end = 0,
-				.running = undefined
+				.running = undefined,
+				.host = host
 			};
 			for (0..DEVICES) |i| {
 				mach.dev_busy[i] = false;
@@ -1214,16 +1218,16 @@ pub fn Machine(
 							const offset = DEVICE_LEN*DEVICES;
 							switch (val){
 								0 => {
-									int0(&self.ds[core], DEVICES, DEVICE_LEN, self.mem[self.mem.len-offset..self.mem.len]);
+									int0(&self.ds[core], DEVICES, DEVICE_LEN, self.mem[self.mem.len-offset..self.mem.len], self.host);
 								},
 								1 => {
-									int1(&self.ds[core], DEVICES, DEVICE_LEN, self.mem[self.mem.len-offset..self.mem.len]);
+									int1(&self.ds[core], DEVICES, DEVICE_LEN, self.mem[self.mem.len-offset..self.mem.len], self.host);
 								},
 								2 => {
-									int2(&self.ds[core], DEVICES, DEVICE_LEN, self.mem[self.mem.len-offset..self.mem.len]);
+									int2(&self.ds[core], DEVICES, DEVICE_LEN, self.mem[self.mem.len-offset..self.mem.len], self.host);
 								},
 								3 => {
-									int3(&self.ds[core], DEVICES, DEVICE_LEN, self.mem[self.mem.len-offset..self.mem.len]);
+									int3(&self.ds[core], DEVICES, DEVICE_LEN, self.mem[self.mem.len-offset..self.mem.len], self.host);
 								},
 								else => {}
 							}
@@ -1550,6 +1554,7 @@ pub fn main() !void {
 	std.debug.print("\n\n", .{});
 	const retext = disassemble(&main_mem, bytes);
 	std.debug.print("disassembly:\n{s}\n\n", .{retext});
+	var host:u64 = 0;
 	var mach = Machine(
 		2,
 		1,
@@ -1560,7 +1565,8 @@ pub fn main() !void {
 		int_nop
 	).init(
 		&main_mem,
-		1024, 256, 32
+		1024, 256, 32,
+		&host
 	);
 	mach.load_rom(0, bytes);
 	mach.run(0, 0);
@@ -1574,7 +1580,7 @@ pub fn main() !void {
 	}
 }
 
-pub fn int_print(ds: *Stack, _: u8, _: u8, _: []u8) void {
+pub fn int_print(ds: *Stack, _: u8, _: u8, _: []u8, _: *anyopaque) void {
 	_ = ds.pop();
 	var len = ds.pop();
 	while (len > 0){
@@ -1583,5 +1589,5 @@ pub fn int_print(ds: *Stack, _: u8, _: u8, _: []u8) void {
 	}
 }
 
-pub fn int_nop(_: *Stack, _:u8, _:u8, _:[]u8) void {
+pub fn int_nop(_: *Stack, _:u8, _:u8, _:[]u8, _: *anyopaque) void {
 }
