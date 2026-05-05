@@ -866,6 +866,58 @@ const Cap = struct {
 
 const Interrupt = fn(*Stack, u8, u8, []u8, *anyopaque) void;
 
+pub fn CapabilityManager(comptime RINGS: u8) type {
+	return struct{
+		const Self = @This();
+		ring: [RINGS] Cap,
+
+		pub fn allow_read(self: *const CapabilityManager, operating_address: Word, address: Word, hp_start: Word, hp_end: Word) bool {
+			for (self.rings) |ring| {
+				if ((operating_address >= self.ptr) and (address < self.ptr + self.len)){
+					return ring.allow_read(address, hp_start, hp_end);
+				}
+			}
+			return false;
+		}
+
+		pub fn allow_write(self: *const CapabilityManager, operating_address: Word, address: Word, hp_start: Word, hp_end: Word) bool {
+			for (self.rings) |ring| {
+				if ((operating_address >= self.ptr) and (address < self.ptr + self.len)){
+					return ring.allow_write(address, hp_start, hp_end);
+				}
+			}
+			return false;
+		}
+
+		pub fn allow_execute(self: *const CapabilityManager, operating_address: Word, address: Word, hp_start: Word, hp_end: Word) bool {
+			for (self.rings) |ring| {
+				if ((operating_address >= self.ptr) and (address < self.ptr + self.len)){
+					return ring.allow_execute(address, hp_start, hp_end);
+				}
+			}
+			return false;
+		}
+
+		pub fn allow_trap(self: *const CapabilityManager, operating_address: Word, address: Word, hp_start: Word, hp_end: Word) bool {
+			for (self.rings) |ring| {
+				if ((operating_address >= self.ptr) and (address < self.ptr + self.len)){
+					return ring.allow_trap(address, hp_start, hp_end);
+				}
+			}
+			return false;
+		}
+
+		pub fn allow_cap(self: *const CapabilityManager, operating_address: Word, address: Word, hp_start: Word, hp_end: Word) bool {
+			for (self.rings) |ring| {
+				if ((operating_address >= self.ptr) and (address < self.ptr + self.len)){
+					return ring.allow_cap(address, hp_start, hp_end);
+				}
+			}
+			return false;
+		}
+	};
+}
+
 pub fn Machine(
 	comptime CORES: u8,
 	comptime DEVICES: u8,
@@ -873,7 +925,8 @@ pub fn Machine(
 	comptime int0: Interrupt,
 	comptime int1: Interrupt,
 	comptime int2: Interrupt,
-	comptime int3: Interrupt
+	comptime int3: Interrupt,
+	comptime RINGS: u8
 ) type {
 	return struct {
 		const Self = @This();
@@ -890,6 +943,7 @@ pub fn Machine(
 		hp_end: Word,
 		running: [CORES]bool,
 		host: *anyopaque,
+		cap_manager: CapabilityManager(RINGS),
 
 		pub fn init(mem: *const std.mem.Allocator, size: Word, ss: Word, css: Word, host: *anyopaque) Self {
 			var mach = Self{
@@ -905,8 +959,18 @@ pub fn Machine(
 				.hp_start = 0,
 				.hp_end = 0,
 				.running = undefined,
-				.host = host
+				.host = host,
+				.cap_manager = CapabilityManager(RINGS){
+					.ring = undefined
+				}
 			};
+			for (0..RINGS) |i| {
+				mach.cap_manager.ring[i] = Cap{
+					.perms=0,
+					.ptr = 0,
+					.len = 0
+				};
+			}
 			for (0..DEVICES) |i| {
 				mach.dev_busy[i] = false;
 			}
@@ -925,6 +989,12 @@ pub fn Machine(
 				mach.running[i] = false;
 			}
 			return mach;
+		}
+
+		pub fn configure_ring(self: *Self, ring: u8, cap: Cap) void {
+			if (ring < self.cap_manager.ring.len){
+				self.cap_manager.ring[ring] = cap;
+			}
 		}
 
 		pub fn load_rom(self: *Self, loc: Word, bytes: []u8) void {
@@ -1565,7 +1635,7 @@ pub fn disassemble(mem: *const std.mem.Allocator, bytes: []u8) []u8 {
 
 pub fn main() !void {
 	const heap = std.heap.page_allocator;
-	const main_buffer = heap.alloc(u8, 0x10000) catch unreachable;
+	const main_buffer = heap.alloc(u8, 0x1000000) catch unreachable;
 	const temp_buffer = heap.alloc(u8, 0x10000) catch unreachable;
 	var main_mem_fixed = std.heap.FixedBufferAllocator.init(main_buffer);
 	var temp_mem_fixed = std.heap.FixedBufferAllocator.init(temp_buffer);
@@ -1605,10 +1675,11 @@ pub fn main() !void {
 		int_print,
 		int_nop,
 		int_nop,
-		int_nop
+		int_nop,
+		4
 	).init(
 		&main_mem,
-		1024, 256, 32,
+		1024<<3, 256, 32,
 		&host
 	);
 	mach.load_rom(0, bytes);
