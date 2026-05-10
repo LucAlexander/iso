@@ -1175,7 +1175,9 @@ pub fn Machine(
 					SPW => {
 						const core_ip = self.ds[core].pop();
 						const core_id = self.spawn(core_ip);
-						self.ds[core].push(core_id);
+						if (core_id != 0x3fff){
+							self.ds[core_id].push(core_id);
+						}
 					},
 					MOD => {
 						const a = self.ds[core].pop();
