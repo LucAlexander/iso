@@ -11,7 +11,7 @@ const string_delimiter = '"';
 const iden = 0;
 const number = 1;
 
-const Word = u16;
+pub const Word = u16;
 
 const Token = struct {
 	tag: TOKEN,
@@ -124,7 +124,7 @@ pub fn tokenize(mem: *const std.mem.Allocator, text: []const u8) Buffer(Token) {
 	return tokens;
 }
 
-const Inst = union(enum){
+pub const Inst = union(enum){
 	psh_ds: Word,
 	pop_ds,
 	pop_rs,
