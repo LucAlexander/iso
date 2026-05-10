@@ -163,7 +163,8 @@ const Inst = union(enum){
 	ge,
 	le,
 	if_,
-	mod
+	mod,
+	spw
 };
 
 const ParseError = error {
@@ -236,6 +237,11 @@ pub fn parse(mem: *const std.mem.Allocator, tokens: []Token, k: u64, instruction
 				return ParseError.UnexpectedToken;
 			},
 			iden => {
+				if (std.mem.eql(u8, tokens[i].value.text, "spw")){
+					instructions.append(Inst{ .spw = undefined }) catch unreachable;
+					i += 1;
+					continue;
+				}
 				if (std.mem.eql(u8, tokens[i].value.text, "mod")){
 					instructions.append(Inst{ .mod = undefined }) catch unreachable;
 					i += 1;
@@ -479,6 +485,7 @@ const IF = 33;
 const MOD = 34;
 const REF = 35;
 const CCP = 36;
+const SPW = 37;
 
 const PSH_MASK = 0;
 const JMP_MASK = 1;
@@ -658,6 +665,12 @@ pub fn code_gen(mem: *const std.mem.Allocator, instructions: Buffer(Inst)) []u8 
 				bytes[i] = INTRINSIC_MASK << 6;
 				i += 1;
 				bytes[i] = IF;
+				i += 1;
+			},
+			.spw => {
+				bytes[i] = INTRINSIC_MASK << 6;
+				i += 1;
+				bytes[i] = SPW;
 				i += 1;
 			},
 			.mod => {
@@ -1046,6 +1059,16 @@ pub fn Machine(
 		pub fn publish_capability(self: *Self, loc: Word, cap: Cap) void {
 			self.cap[loc] = cap;
 		}
+	
+		pub fn spawn(self: *Self, ip: Word) Word {
+			for (0..CORES) |i| {
+				if (self.running[i] == false){
+					self.run(@truncate(i), ip);
+					return @truncate(i);
+				}
+			}
+			return 0x3fff;
+		}
 
 		pub fn run(self: *Self, core: u8, ip: Word) void {
 			self.ip[core] = ip;
@@ -1148,6 +1171,11 @@ pub fn Machine(
 							}
 						}
 						self.ds[core].push(loc);
+					},
+					SPW => {
+						const core_ip = self.ds[core].pop();
+						const core_id = self.spawn(core_ip);
+						self.ds[core].push(core_id);
 					},
 					MOD => {
 						const a = self.ds[core].pop();
@@ -1593,6 +1621,7 @@ pub fn disassemble(mem: *const std.mem.Allocator, bytes: []u8) []u8 {
 					IF => {text.appendSlice("if\n") catch unreachable;},
 					POP_RS => {text.appendSlice("ret\n") catch unreachable;},
 					MOD => {text.appendSlice("mod\n") catch unreachable;},
+					SPW => {text.appendSlice("spw\n") catch unreachable;},
 					ADD => {text.appendSlice("add\n") catch unreachable;},
 					MUL => {text.appendSlice("mul\n") catch unreachable;},
 					SUB => {text.appendSlice("sub\n") catch unreachable;},
