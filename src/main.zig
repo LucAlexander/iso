@@ -1010,34 +1010,10 @@ pub fn Machine(
 			}
 		}
 
-		pub fn core_duplicate(_: *Self, mem: *const std.mem.Allocator, bytes: []u8) []u8 {
-			const new = mem.alloc(u8, CORES*bytes.len) catch unreachable;
-			var i: Word = 0;
-			while (i < bytes.len){
-				for (0..CORES) |k| {
-					if (bytes[i] >> 6 == JMP_MASK or bytes[i] >> 6 == JMP_NC_MASK) {
-						var combined: Word = (@as(Word, @intCast(bytes[i])) << 8) | bytes[i+1];
-						combined &= 0x3fff;
-						const left:u8 = @truncate(combined >> 8);
-						const right:u8 = @truncate(combined & 0xff);
-						new[i+k*bytes.len] = left | (bytes[i] & 0b11000000);
-						new[(i+k*bytes.len)+1] = right;
-					}
-					else{
-						new[i+k*bytes.len] = bytes[i];
-						new[(i+k*bytes.len)+1] = bytes[i+1];
-					}
-				}
-				i += 2;
-			}
-			return new;
-		}
-		
-		pub fn load_rom(self: *Self, mem: *const std.mem.Allocator, loc: Word, bytes: []u8) void {
-			const new = self.core_duplicate(mem, bytes);
+		pub fn load_rom(self: *Self, loc: Word, bytes: []u8) void {
 			var i:Word = loc;
-			while (i < loc+new.len){
-				self.mem[i] = new[i-loc];
+			while (i < loc+bytes.len){
+				self.mem[i] = bytes[i-loc];
 				i += 1;
 			}
 			self.hp = i;
@@ -1085,11 +1061,10 @@ pub fn Machine(
 		}
 	
 		pub fn spawn(self: *Self, ip: Word) Word {
-			const core_offset: Word = self.hp_start / CORES;
 			for (0..CORES) |i| {
 				const word_i: Word = @truncate(i);
 				if (self.running[i] == false){
-					self.run(@truncate(word_i), ip+(word_i*core_offset));
+					self.run(@truncate(word_i), ip);
 					return word_i;
 				}
 			}
@@ -1739,7 +1714,7 @@ pub fn main() !void {
 		1024<<3, 256, 32,
 		&host
 	);
-	mach.load_rom(&main_mem, 0, bytes);
+	mach.load_rom(0, bytes);
 	mach.run(0, 0);
 	if (args.len == 3){
 		if (std.mem.eql(u8, args[2], "-g")){
